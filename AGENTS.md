@@ -28,4 +28,10 @@ A personal harness for pi (earendil-works/pi-coding-agent). It is loaded as a lo
 - After a change, run `/reload` inside pi or restart pi to check it
 - The voice helper can be tried without a microphone with `--file <audio file>`
 - Voice input and read-aloud mirror the Alora app. When fixing them, look at the same logic in Alora too
-- Write code, comments, docs, and UI text in English
+- Write code, comments, docs, UI text, and commit messages in English
+
+## This repository is public
+
+- Never commit personal email addresses, absolute paths under a home directory, names of private repositories or folders, keys, tokens, or `.env` files
+- Commit messages follow Conventional Commits and do not include session URLs or other identifiers
+- Before committing, read the staged diff (`git diff --cached`) and check it for the items above
