@@ -1,0 +1,64 @@
+{
+	"$comment": "What the AI must never do. Only what is listed here is blocked. Give every rule a reason. Commands you type yourself with ! are not blocked. Put personal rules in rules.local.json (gitignored).",
+	"commands": [
+		{
+			"name": "sudo",
+			"pattern": "(^|[;&|(]\\s*|\\s)sudo\\b",
+			"reason": "Never let the AI run commands with administrator rights"
+		},
+		{
+			"name": "rm -rf",
+			"pattern": "\\brm\\s+(-[a-zA-Z]*r[a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*r|-r\\s+-f|-f\\s+-r|--recursive\\s+--force|--force\\s+--recursive)",
+			"reason": "Recursive force deletes skip the trash and cannot be undone"
+		},
+		{
+			"name": ".env",
+			"pattern": "(^|[\\s/'\"=:])\\.env(\\.[A-Za-z0-9_-]+)?($|[\\s'\";|&)>])",
+			"except": "\\.env\\.(example|sample|template)",
+			"reason": ".env files hold keys, so the AI must not read them"
+		},
+		{
+			"name": "git push --force",
+			"pattern": "\\bgit\\b[^;&|]*\\spush\\b[^;&|]*(\\s--force(-with-lease)?\\b|\\s-[a-zA-Z]*f[a-zA-Z]*\\b|\\s\\+\\S)",
+			"reason": "Rewriting remote history cannot be undone from anywhere else"
+		},
+		{
+			"name": "git reset --hard",
+			"pattern": "\\bgit\\b[^;&|]*\\sreset\\b[^;&|]*\\s--hard\\b",
+			"reason": "Uncommitted changes are lost for good"
+		},
+		{
+			"name": "git clean -f",
+			"pattern": "\\bgit\\b[^;&|]*\\sclean\\b[^;&|]*\\s(-[a-zA-Z]*f|--force)",
+			"reason": "Untracked files are deleted without going through the trash"
+		},
+		{
+			"name": "git checkout .",
+			"pattern": "\\bgit\\b[^;&|]*\\s(checkout|restore)\\s+(--\\s+)?\\.($|[\\s;&|])",
+			"reason": "All uncommitted changes are thrown away at once"
+		}
+	],
+	"paths": [
+		{
+			"name": ".env",
+			"path": "**/.env",
+			"tools": [
+				"read",
+				"edit",
+				"write"
+			],
+			"reason": ".env files hold keys, so the AI must not read them"
+		},
+		{
+			"name": ".env.*",
+			"path": "**/.env.*",
+			"except": "**/.env.{example,sample,template}",
+			"tools": [
+				"read",
+				"edit",
+				"write"
+			],
+			"reason": ".env files hold keys, so the AI must not read them"
+		}
+	]
+}

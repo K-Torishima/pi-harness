@@ -1,0 +1,17 @@
+{
+	"$comment": "The deck of lenses. One is drawn each time a session starts. name is a short label, question is what you ask yourself. Add more with /lens add <name>: <question>, or edit this file directly",
+	"lenses": [
+		{ "name": "Doubt yourself", "question": "Which assumption here are you least sure about?" },
+		{ "name": "A better plan", "question": "If you had to name a completely different approach, what would it be?" },
+		{ "name": "Laziness", "question": "Is this the third time doing it by hand? Then turn it into a mechanism" },
+		{ "name": "Impatience", "question": "Where are you waiting or slowed down, and can a tool remove it?" },
+		{ "name": "Hubris", "question": "Would you be proud to show this to someone else?" },
+		{ "name": "What does it prevent", "question": "What failure is this meant to prevent?" },
+		{ "name": "Step back", "question": "Is this work actually serving the real goal?" },
+		{ "name": "Fail first", "question": "If this failed, what would the cause have been?" },
+		{ "name": "Solve by removing", "question": "Could this be solved by taking something away instead of adding?" },
+		{ "name": "Another field", "question": "What would another field call this problem, and how do they solve it?" },
+		{ "name": "Repetition", "question": "Have you said the same thing twice? Then move it into a mechanism" },
+		{ "name": "Try it small", "question": "What is the smallest way to try this and find out?" }
+	]
+}

@@ -1,0 +1,4 @@
+extensions/voice/bin/
+.DS_Store
+node_modules/
+extensions/guard/rules.local.json
