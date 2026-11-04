@@ -4,7 +4,8 @@
  * "Always run review and simplify before a PR" kept being asked for in words and kept being skipped,
  * so this makes it a gate instead of a request.
  *
- * - Counts as a change: a successful edit / write, or a bash command that changes files (git commands do not count)
+ * - Counts as a change: a successful edit / write, or any part of a bash command that changes files,
+ *   including git commands that bring in code (pull, cherry-pick, stash pop, apply). git add / commit / push / fetch / tag do not count
  * - Counts as a run: /skill:simplify or /skill:review typed by you, or the AI reading skills/<name>/SKILL.md
  * - gh pr create is blocked unless simplify ran after the first change since the last PR,
  *   and review ran after the last change (fixing what the review found needs another review)
@@ -13,14 +14,19 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { classifyCommand } from "../mandate/rules.ts";
+import { commandText, GIT } from "../lib/shell.ts";
+import { localChanges } from "../mandate/rules.ts";
 
 type Skill = "simplify" | "review";
 
 export const SKILL_FILE = /(?:^|\/)skills\/(simplify|review)\/SKILL\.md$/;
 const SKILL_COMMAND = /^\/skill:(simplify|review)\b/;
 const PR_CREATE = /\bgh\s+pr\s+create\b/;
-const unquote = (command: string) => command.replace(/'[^']*'|"(?:\\.|[^"\\])*"/g, "''");
+// git commands that record or send code without changing it. Everything else that changes files (pull, cherry-pick, stash pop, apply, ...) counts
+const RECORDS_ONLY = new RegExp(`${GIT}(?:add|commit|push|fetch|tag)\\b`);
+
+/** Does this command change the code that would go into the PR? */
+const changesCode = (command: string) => localChanges(command).some(({ segment }) => !RECORDS_ONLY.test(segment));
 
 export default function (pi: ExtensionAPI) {
 	// A counter, so "after" means "later in this session" without trusting clocks
@@ -74,9 +80,8 @@ export default function (pi: ExtensionAPI) {
 		} else if (event.toolName === "bash") {
 			const command = String(input.command ?? "");
 			// Once a PR is open, the next one only needs simplify again for changes made after it
-			if (PR_CREATE.test(unquote(command))) firstChange = 0;
-			const effect = classifyCommand(command);
-			if (effect.kind === "local" && effect.label !== "git (write)") changed();
+			if (PR_CREATE.test(commandText(command))) firstChange = 0;
+			if (changesCode(command)) changed();
 		}
 		return undefined;
 	});
@@ -84,7 +89,7 @@ export default function (pi: ExtensionAPI) {
 	pi.on("tool_call", async (event, ctx) => {
 		if (event.toolName !== "bash") return undefined;
 		const command = String((event.input as { command?: unknown }).command ?? "");
-		if (!PR_CREATE.test(unquote(command))) return undefined;
+		if (!PR_CREATE.test(commandText(command))) return undefined;
 		const todo = missing();
 		if (todo.length === 0) return undefined;
 		if (ctx.hasUI) ctx.ui.notify(`reviewed: PR blocked until ${todo.map((t) => t.split(" ")[0]).join(" and ")} run`, "warning");

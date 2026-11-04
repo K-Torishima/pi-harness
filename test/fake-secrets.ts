@@ -4,5 +4,6 @@ export const FAKE = {
 	aws: `AKIA${"ABCD1234".repeat(2)}`,
 	slack: `xoxb-${"1234567890"}-abcdefghij`,
 	anthropic: `sk-ant-${"x9".repeat(20)}`,
-	key: ["-----BEGIN OPENSSH PRIVATE", " KEY-----\nAAAAB3Nza\n-----END OPENSSH PRIVATE", " KEY-----"].join(""),
+	key: ["-----BEGIN OPENSSH PRIVATE", ` KEY-----\n${"QUFBQUIzTnphQzF5YzJF".repeat(4)}\n${"Zm9vYmFy".repeat(3)}==\n-----END OPENSSH PRIVATE`, " KEY-----"].join(""),
+	npm: `npm_${"Ab12".repeat(9)}`,
 };

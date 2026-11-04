@@ -3,11 +3,15 @@
  * for secrets and personal details. No pi imports, so tests can load it directly.
  */
 
+import { commandText, GIT, segments, unwrapShellC } from "../lib/shell.ts";
+
 export type SecretPattern = { name: string; re: RegExp };
 
 /** Shapes that are a secret wherever they appear. Used both to hide tool output and to scan diffs */
 export const SECRETS: SecretPattern[] = [
-	{ name: "private key", re: /-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----[\s\S]*?(?:-----END (?:[A-Z]+ )?PRIVATE KEY-----|$)/g },
+	// The header plus the base64 body that follows it. A header on its own (code that checks for one) is left alone
+	{ name: "private key", re: /-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----\s+[A-Za-z0-9+/=\s]{40,}?(?:-----END (?:[A-Z]+ )?PRIVATE KEY-----|(?=[^A-Za-z0-9+/=\s])|$)/g },
+	{ name: "npm token", re: /\bnpm_[A-Za-z0-9]{36}\b/g },
 	{ name: "AWS access key", re: /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g },
 	{ name: "GitHub token", re: /\b(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{40,})\b/g },
 	{ name: "API key", re: /\bsk-(?:ant-|proj-)?[A-Za-z0-9_-]{24,}/g },
@@ -39,8 +43,8 @@ export type Finding = { file: string; line: number; what: string };
 
 export type PersonalTerms = { homeDir?: string; emails?: string[]; terms?: string[] };
 
-/** Files whose very presence is the problem */
-const SECRET_FILES = /(?:^|\/)(?:\.env(?:\.(?!example$|sample$|template$)[\w.-]+)?|id_(?:rsa|ed25519|ecdsa|dsa)|[\w.-]+\.pem|credentials\.json|\.npmrc|\.netrc)$/;
+/** Files that usually hold secrets. Adding lines to them is the problem; removing lines is fine */
+const SECRET_FILES = /(?:^|\/)(?:\.env(?:\.(?!example$|sample$|template$)[\w.-]+)?|id_(?:rsa|ed25519|ecdsa|dsa)|[\w.-]+\.pem|credentials\.json|\.netrc)$/;
 
 /**
  * Look at the lines a unified diff adds (git diff -U0 output) and report secrets and personal details.
@@ -55,10 +59,11 @@ export function scanDiff(diff: string, personal: PersonalTerms = {}): Finding[] 
 	];
 	let file = "";
 	let line = 0;
+	// Secret files already reported, so a file is listed once however many lines it gains
+	const reported = new Set<string>();
 	for (const raw of diff.split("\n")) {
 		if (raw.startsWith("+++ ")) {
 			file = raw.replace(/^\+\+\+ (?:b\/)?/, "").trim();
-			if (file !== "/dev/null" && SECRET_FILES.test(file)) findings.push({ file, line: 0, what: "a file that usually holds secrets" });
 			continue;
 		}
 		const hunk = raw.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
@@ -68,6 +73,10 @@ export function scanDiff(diff: string, personal: PersonalTerms = {}): Finding[] 
 		}
 		if (!raw.startsWith("+")) continue;
 		const text = raw.slice(1);
+		if (SECRET_FILES.test(file) && !reported.has(file)) {
+			reported.add(file);
+			findings.push({ file, line: 0, what: "a file that usually holds secrets" });
+		}
 		for (const { name, re } of SECRETS) {
 			re.lastIndex = 0;
 			if (re.test(text)) findings.push({ file, line, what: name });
@@ -80,19 +89,43 @@ export function scanDiff(diff: string, personal: PersonalTerms = {}): Finding[] 
 	return findings;
 }
 
-/** Which outgoing action a bash command is, if any */
+/** Outgoing actions in a bash command. `git commit && git push` is both: the new commit and the history it sends */
 export type Outgoing = "commit" | "push" | "pr";
 
-export function outgoingAction(command: string): Outgoing | undefined {
-	const unquoted = command.replace(/'[^']*'|"(?:\\.|[^"\\])*"/g, "''");
-	const git = String.raw`\bgit(?:\s+(?:-[Cc]\s+\S+|--?[\w-]+(?:=\S+)?))*\s+`;
-	if (/\bgh\s+pr\s+create\b/.test(unquoted)) return "pr";
-	if (new RegExp(`${git}push\\b`).test(unquoted)) return "push";
-	if (new RegExp(`${git}commit\\b`).test(unquoted)) return "commit";
-	return undefined;
+export function outgoingActions(command: string): Outgoing[] {
+	const text = commandText(command);
+	const out: Outgoing[] = [];
+	if (new RegExp(`${GIT}commit\\b`).test(text)) out.push("commit");
+	if (new RegExp(`${GIT}push\\b`).test(text)) out.push("push");
+	if (/\bgh\s+pr\s+create\b/.test(text)) out.push("pr");
+	return out;
 }
 
-/** The directory a git command runs in: `git -C <dir>` or a leading `cd <dir> &&` */
-export function commandDir(command: string): string | undefined {
-	return command.match(/\bgit\s+-C\s+("[^"]+"|'[^']+'|\S+)/)?.[1]?.replace(/^['"]|['"]$/g, "") ?? command.match(/^\s*cd\s+("[^"]+"|'[^']+'|\S+)\s*&&/)?.[1]?.replace(/^['"]|['"]$/g, "");
+/**
+ * What a commit in this command takes in besides what is staged now:
+ * `all` for `git add -A` / `-u` / `commit -a`, otherwise the paths passed to `git add`
+ */
+export function addScope(command: string): { all: boolean; paths: string[] } {
+	let all = false;
+	const paths: string[] = [];
+	for (const seg of segments(unwrapShellC(command))) {
+		const add = seg.match(new RegExp(`${GIT}add\\b(.*)$`));
+		if (add) {
+			for (const word of add[1].trim().split(/\s+/).filter(Boolean)) {
+				if (/^(?:-A|--all|-u|--update)$/.test(word)) all = true;
+				else if (!word.startsWith("-")) paths.push(word.replace(/^['"]|['"]$/g, ""));
+			}
+		}
+		if (new RegExp(`${GIT}commit\\b.*\\s(?:-[a-zA-Z]*a[a-zA-Z]*|--all)(?:\\s|$)`).test(seg)) all = true;
+	}
+	return { all, paths };
+}
+
+/** The directory a git command runs in: `git -C <dir>` or a leading `cd <dir> &&`, with ~ expanded */
+export function commandDir(command: string, home: string): string | undefined {
+	const text = unwrapShellC(command);
+	const dir = text.match(/\bgit\s+-C\s+("[^"]+"|'[^']+'|\S+)/)?.[1] ?? text.match(/(?:^|;|&&)\s*cd\s+("[^"]+"|'[^']+'|\S+)\s*&&/)?.[1];
+	if (!dir) return undefined;
+	const bare = dir.replace(/^['"]|['"]$/g, "");
+	return bare === "~" || bare === "$HOME" ? home : bare.replace(/^(?:~|\$HOME)\//, `${home}/`);
 }

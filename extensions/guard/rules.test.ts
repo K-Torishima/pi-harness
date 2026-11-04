@@ -32,6 +32,13 @@ test("nearby safe commands are not blocked", () => {
 	assert.equal(blocked("kubectl get secrets"), undefined);
 });
 
+test("mentioning a secret command in a message or search is not running it", () => {
+	assert.equal(blocked('gh pr create --body "Blocks commands that print secrets (gh auth token, printenv)"'), undefined);
+	assert.equal(blocked('git commit -m "guard: block gh auth token"'), undefined);
+	assert.equal(blocked('rg "gh auth token" README.md'), undefined);
+	assert.equal(blocked('bash -c "gh auth token"'), "print a secret", "a script passed to bash -c still counts");
+});
+
 test("credential files are blocked for read tools, public keys are not", () => {
 	assert.equal(matchPath(compiled, "read", join(homedir(), ".aws/credentials"))?.name, "credential file");
 	assert.equal(matchPath(compiled, "read", join(homedir(), ".ssh/id_rsa"))?.name, "credential file");

@@ -74,6 +74,16 @@ test("git commits and failed edits are not changes; other commands pass", async 
 	assert.equal(await m.bash('git commit -m "before gh pr create"'), undefined);
 });
 
+test("git commands that bring in code, and changes chained after git add, need a new review", async () => {
+	for (const command of ["git cherry-pick abc", "git stash pop", "git pull", "git apply fix.patch", "git add -A && sed -i 's/a/b/' src/x.ts"]) {
+		const m = await setup();
+		await m.loads("simplify");
+		await m.loads("review");
+		await m.fire("tool_result", { toolName: "bash", input: { command }, isError: false, content: [] });
+		assert.equal((await m.pr())?.block, true, command);
+	}
+});
+
 test("/reviewed says what is missing", async () => {
 	const m = await setup();
 	await m.edit();

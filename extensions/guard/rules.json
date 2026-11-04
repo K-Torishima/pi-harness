@@ -39,11 +39,13 @@
 		},
 		{
 			"name": "print a secret",
+			"unquoted": true,
 			"pattern": "\\b(secretsmanager\\s+get-secret-value|gcloud\\s+secrets\\s+versions\\s+access|gh\\s+auth\\s+token|security\\s+find-(generic|internet)-password\\b[^;&|]*\\s-w|op\\s+read|op\\s+item\\s+get\\b[^;&|]*--reveal|vault\\s+(kv\\s+get|read)|kubectl\\s+get\\s+secrets?\\b[^;&|]*-o\\s*(yaml|json|jsonpath))\\b",
 			"reason": "This prints a secret into the conversation and the session log. Check that it exists without printing it (list names, or test the thing that uses it)"
 		},
 		{
 			"name": "dump the environment",
+			"unquoted": true,
 			"pattern": "(^|[;&|(]\\s*)(printenv|env)\\s*($|[;&|)>])",
 			"reason": "The whole environment can hold tokens. Print only the variable you need, or test whether it is set with [ -n \"$NAME\" ]"
 		},
