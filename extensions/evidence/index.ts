@@ -11,7 +11,7 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { onRequestStart, textOf } from "../lib/request.ts";
-import { checkClaims, emptyLedger, type Ledger, record, stepOf } from "./claims.ts";
+import { checkClaims, emptyLedger, type Ledger, record, stepsOf } from "./claims.ts";
 
 type Msg = { role?: string; content?: unknown };
 
@@ -26,12 +26,16 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("session_start", async () => startRequest());
 	onRequestStart(pi, () => startRequest());
+	// Each /goal round ends in its own reply, so each one gets checked. The tally carries over: a check stays valid until the next change
+	pi.on("message_start", async (event) => {
+		const m = event.message as { role?: string; customType?: string };
+		if (m.role === "custom" && m.customType === "goal") sentBack = false;
+	});
 
 	// Count what actually ran; a failed or blocked call proves nothing
 	pi.on("tool_result", async (event) => {
 		if (event.isError) return undefined;
-		const step = stepOf(event.toolName, (event.input ?? {}) as Record<string, unknown>);
-		if (step) record(ledger, step);
+		for (const step of stepsOf(event.toolName, (event.input ?? {}) as Record<string, unknown>)) record(ledger, step);
 		return undefined;
 	});
 

@@ -45,6 +45,11 @@ export default function (pi: ExtensionAPI) {
 		startedAt = Date.now();
 		if (source !== "extension") typed = text;
 	});
+	// Each /goal round ends in its own reply, so each one gets checked
+	pi.on("message_start", async (event) => {
+		const m = event.message as { role?: string; customType?: string };
+		if (m.role === "custom" && m.customType === "goal") sentBack = false;
+	});
 
 	pi.on("agent_before_settle", async (event) => {
 		// Do not check event.context.canContinue here: it is false whenever the context ends with the assistant's reply,

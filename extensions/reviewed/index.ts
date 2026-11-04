@@ -14,19 +14,14 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { commandText, GIT } from "../lib/shell.ts";
-import { localChanges } from "../mandate/rules.ts";
+import { commandText } from "../lib/shell.ts";
+import { changesCode } from "../mandate/rules.ts";
 
 type Skill = "simplify" | "review";
 
 export const SKILL_FILE = /(?:^|\/)skills\/(simplify|review)\/SKILL\.md$/;
 const SKILL_COMMAND = /^\/skill:(simplify|review)\b/;
 const PR_CREATE = /\bgh\s+pr\s+create\b/;
-// git commands that record or send code without changing it. Everything else that changes files (pull, cherry-pick, stash pop, apply, ...) counts
-const RECORDS_ONLY = new RegExp(`${GIT}(?:add|commit|push|fetch|tag)\\b`);
-
-/** Does this command change the code that would go into the PR? */
-const changesCode = (command: string) => localChanges(command).some(({ segment }) => !RECORDS_ONLY.test(segment));
 
 export default function (pi: ExtensionAPI) {
 	// A counter, so "after" means "later in this session" without trusting clocks

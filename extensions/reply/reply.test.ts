@@ -108,6 +108,13 @@ test("a queued follow-up or a /goal kickoff starts a new request; the language c
 	assert.equal((await f.settle())?.continue, true);
 });
 
+test("each /goal round's reply gets checked", async () => {
+	const m = await setup("I checked it and it is waiting on an admin to grant the permission.");
+	assert.equal((await m.settle())?.continue, true);
+	await m.fire("message_start", { message: { role: "custom", customType: "goal" } });
+	assert.equal((await m.settle())?.continue, true);
+});
+
 test("a fine reply, or one another extension already continues, is left alone", async () => {
 	const fine = await setup("管理者の権限待ちで止まっています。");
 	assert.equal(await fine.settle(), undefined);

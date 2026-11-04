@@ -110,6 +110,16 @@ export function localChanges(command: string): { label: string; segment: string 
 	return out;
 }
 
+// git commands that record, send, or name code without changing the files. Everything else that changes files
+// (pull, cherry-pick, stash pop, apply, checkout <file>, ...) changes the code
+const RECORDS_ONLY = new RegExp(`${GIT}(?:add|commit|push|fetch|tag|branch|checkout\\s+-b|switch\\s+-c)\\b`);
+
+/** Does this simple command (one segment from localChanges) change the code itself? */
+export const changesCodeSegment = (segment: string): boolean => !RECORDS_ONLY.test(segment);
+
+/** Does any part of this command change the code itself (not just record or send it)? */
+export const changesCode = (command: string): boolean => localChanges(command).some(({ segment }) => changesCodeSegment(segment));
+
 /** What a tool call does. Unknown tools count as read only (mandate does not guess) */
 export function classifyTool(toolName: string, input: Record<string, unknown>): Effect {
 	if (toolName === "edit" || toolName === "write") return { kind: "local", label: `${toolName} ${String(input.path ?? "")}`.trim() };
