@@ -34,7 +34,13 @@ export async function loadExtension(path: string, cwd: string) {
 		hasUI: true,
 		cwd,
 		sessionManager: { getEntries: () => [...entries, ...otherBranch], getBranch: () => entries },
-		ui: { notify: (m: string) => notes.push(m), setStatus: (_k: string, s: string) => status.push(s), theme: { fg: (_c: string, s: string) => s } },
+		ui: {
+			notify: (m: string) => notes.push(m),
+			setStatus: (_k: string, s: string) => status.push(s),
+			setTitle: () => {},
+			setWidget: () => {},
+			theme: { fg: (_c: string, s: string) => s, bold: (s: string) => s },
+		},
 	};
 
 	/** Run every handler for an event and return the last result */
