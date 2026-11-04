@@ -18,36 +18,10 @@ export type Effect =
 	| { kind: "local"; label: string }
 	| { kind: "outward"; grant: Grant; label: string };
 
-/** Drop heredoc bodies, so text inside a script or message does not look like a command */
-export function stripHeredocs(cmd: string): string {
-	return cmd.replace(/<<-?\s*(['"]?)(\w+)\1[^\n]*\n[\s\S]*?\n\s*\2\s*(?=\n|$)/g, "<<$2");
-}
-
-// One left-to-right pass, so an apostrophe inside "it's" does not open a fake single-quoted span
-const QUOTED = /'[^']*'|"(?:\\.|[^"\\])*"/g;
-
-/** Drop quoted strings, so `rg "rm -rf"` or `jq '.a > 1'` do not look like writes */
-export function stripQuoted(cmd: string): string {
-	return cmd.replace(QUOTED, (m) => (m[0] === "'" ? "''" : '""'));
-}
-
-/** Unwrap the script passed to `sh -c` / `bash -c` / `eval`, so the commands inside are checked too */
-export function unwrapShellC(cmd: string): string {
-	return cmd.replace(/\b((?:ba|z)?sh\s+-l?c|eval)\s+('[^']*'|"(?:\\.|[^"\\])*")/g, (_m, lead: string, q: string) => `${lead} ; ${q.slice(1, -1)}`);
-}
-
-/** Split a command line into simple commands at ; && || | newlines and $( */
-function segments(cmd: string): string[] {
-	return cmd
-		.split(/;|&&|\|\||\||\n|\$\(|`/)
-		.map((s) => s.trim())
-		.filter(Boolean);
-}
+import { commandText, GIT, segments, stripHeredocs, stripQuoted, unwrapShellC } from "../lib/shell.ts";
 
 // The start of a simple command: env assignments and wrappers such as `time` or `nohup`
 const LEAD = String.raw`^(?:\w+=\S*\s+)*(?:(?:command|time|nohup)\s+)?`;
-// git's global options before the subcommand: -C <dir>, -c <key=value>, --no-pager, --git-dir=...
-const GIT = String.raw`\bgit(?:\s+(?:-[Cc]\s+\S+|--?[\w-]+(?:=\S+)?))*\s+`;
 // Commands that change files
 const CHANGERS = "rm|rmdir|mv|cp|mkdir|touch|chmod|chown|ln|truncate|tee|dd|install|patch|unzip";
 
@@ -123,6 +97,17 @@ export function classifyCommand(command: string): Effect {
 	}
 	if (redirects(unquoted)) return { kind: "local", label: "write to a file with >" };
 	return { kind: "read" };
+}
+
+/** Every simple command in a command line that changes local files, with its label. Unlike classifyCommand, it does not stop at the first one */
+export function localChanges(command: string): { label: string; segment: string }[] {
+	const out: { label: string; segment: string }[] = [];
+	for (const segment of segments(commandText(command))) {
+		const hit = LOCAL.find(({ re }) => re.test(segment));
+		if (hit) out.push({ label: hit.label, segment });
+		else if (redirects(segment)) out.push({ label: "write to a file with >", segment });
+	}
+	return out;
 }
 
 /** What a tool call does. Unknown tools count as read only (mandate does not guess) */

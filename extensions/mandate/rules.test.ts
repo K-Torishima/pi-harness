@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { asksPermission, classifyCommand, classifyTool, quoteMatches } from "./rules.ts";
+import { asksPermission, classifyCommand, classifyTool, localChanges, quoteMatches } from "./rules.ts";
+
+test("localChanges lists every changing part of a command, not just the first", () => {
+	assert.deepEqual(
+		localChanges("git add -A && sed -i 's/a/b/' x.ts > out.txt").map((c) => c.label),
+		["git (write)", "in-place edit"],
+	);
+	assert.deepEqual(localChanges("ls && cat a > b").map((c) => c.label), ["write to a file with >"]);
+	assert.deepEqual(localChanges("git status && rg foo"), []);
+});
 
 const kind = (cmd: string) => classifyCommand(cmd).kind;
 const grant = (cmd: string) => {

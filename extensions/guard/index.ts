@@ -14,8 +14,10 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { commandText } from "../lib/shell.ts";
 
-type CommandRule = { name: string; pattern: string; except?: string; reason: string };
+// unquoted: match only the command itself, not text inside quotes or heredocs (messages, search strings)
+type CommandRule = { name: string; pattern: string; except?: string; unquoted?: boolean; reason: string };
 type PathRule = { name: string; path: string; except?: string; tools: string[]; reason: string };
 type Rules = { commands?: CommandRule[]; paths?: PathRule[] };
 
@@ -92,10 +94,12 @@ export function load(): { compiled: Compiled; error?: string } {
 
 /** The first rule a command string matches */
 export function matchCommand(c: Compiled, command: string): CommandRule | undefined {
+	const bare = commandText(command);
 	for (const { rule, re, except } of c.commands) {
-		if (!re.test(command)) continue;
+		const text = rule.unquoted ? bare : command;
+		if (!re.test(text)) continue;
 		// Block only if it still matches after removing the exceptions (such as .env.example templates)
-		if (except && !re.test(command.replace(except, ""))) continue;
+		if (except && !re.test(text.replace(except, ""))) continue;
 		return rule;
 	}
 	return undefined;

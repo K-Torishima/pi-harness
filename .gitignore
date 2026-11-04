@@ -2,3 +2,4 @@ extensions/voice/bin/
 .DS_Store
 node_modules/
 extensions/guard/rules.local.json
+extensions/secrets/terms.local.json

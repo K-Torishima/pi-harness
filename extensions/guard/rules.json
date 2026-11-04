@@ -36,6 +36,23 @@
 			"name": "git checkout .",
 			"pattern": "\\bgit\\b[^;&|]*\\s(checkout|restore)\\s+(--\\s+)?\\.($|[\\s;&|])",
 			"reason": "All uncommitted changes are thrown away at once"
+		},
+		{
+			"name": "print a secret",
+			"unquoted": true,
+			"pattern": "\\b(secretsmanager\\s+get-secret-value|gcloud\\s+secrets\\s+versions\\s+access|gh\\s+auth\\s+token|security\\s+find-(generic|internet)-password\\b[^;&|]*\\s-w|op\\s+read|op\\s+item\\s+get\\b[^;&|]*--reveal|vault\\s+(kv\\s+get|read)|kubectl\\s+get\\s+secrets?\\b[^;&|]*-o\\s*(yaml|json|jsonpath))\\b",
+			"reason": "This prints a secret into the conversation and the session log. Check that it exists without printing it (list names, or test the thing that uses it)"
+		},
+		{
+			"name": "dump the environment",
+			"unquoted": true,
+			"pattern": "(^|[;&|(]\\s*)(printenv|env)\\s*($|[;&|)>])",
+			"reason": "The whole environment can hold tokens. Print only the variable you need, or test whether it is set with [ -n \"$NAME\" ]"
+		},
+		{
+			"name": "credential file",
+			"pattern": "(~|\\$HOME|/Users/[^/\\s]+|/home/[^/\\s]+)/(\\.ssh/id_[a-z0-9]+($|[\\s;&|'\"])|\\.aws/credentials|\\.config/gh/hosts\\.yml|\\.netrc|\\.docker/config\\.json)",
+			"reason": "Credential files hold keys and tokens, so the AI must not read them"
 		}
 	],
 	"paths": [
@@ -59,6 +76,17 @@
 				"write"
 			],
 			"reason": ".env files hold keys, so the AI must not read them"
+		},
+		{
+			"name": "credential file",
+			"path": "~/{.ssh/id_*,.aws/credentials,.config/gh/hosts.yml,.netrc,.docker/config.json}",
+			"except": "~/.ssh/id_*.pub",
+			"tools": [
+				"read",
+				"edit",
+				"write"
+			],
+			"reason": "Credential files hold keys and tokens, so the AI must not read them"
 		}
 	]
 }

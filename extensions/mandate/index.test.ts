@@ -1,60 +1,24 @@
-/**
- * Load mandate through pi's own extension loader and drive its handlers with fake events.
- * Needs pi installed (PI_PACKAGE, or found through Homebrew).
- */
+/** Drive mandate's handlers with fake events, loaded through pi's own extension loader */
 import assert from "node:assert/strict";
-import { execSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
+import { type Entry, loadExtension } from "../../test/load-extension.ts";
 
-const PI =
-	process.env.PI_PACKAGE ??
-	join(execSync("brew --prefix pi-coding-agent", { encoding: "utf8" }).trim(), "libexec/lib/node_modules/@earendil-works/pi-coding-agent");
 const HERE = dirname(fileURLToPath(import.meta.url));
 
-type Handler = (event: unknown, ctx: unknown) => unknown;
-type Entry = { type: string; message?: { role: string; content: unknown } };
-
 async function setup() {
-	const loader = await import(pathToFileURL(join(PI, "dist/core/extensions/loader.js")).href);
-	const { createEventBus } = await import(pathToFileURL(join(PI, "dist/core/event-bus.js")).href);
-	const bus = createEventBus();
-	const runtime = loader.createExtensionRuntime();
-	const appended: unknown[] = [];
-	runtime.appendEntry = (customType: string, data: unknown) => appended.push({ customType, data });
-	const result = await loader.loadExtensions([join(HERE, "index.ts")], HERE, bus, runtime);
-	assert.deepEqual(result.errors, []);
-	const ext = result.extensions[0];
-
-	const entries: Entry[] = [];
-	// Entries that live only on another branch (left with /tree): in getEntries, but not in getBranch
-	const otherBranch: Entry[] = [];
-	const notes: string[] = [];
-	const status: string[] = [];
-	const ctx = {
-		hasUI: true,
-		cwd: HERE,
-		sessionManager: { getEntries: () => [...entries, ...otherBranch], getBranch: () => entries },
-		ui: { notify: (m: string) => notes.push(m), setStatus: (_k: string, s: string) => status.push(s), theme: { fg: (_c: string, s: string) => s } },
-	};
-	const fire = async (name: string, event: Record<string, unknown> = {}) => {
-		let last: unknown;
-		for (const h of (ext.handlers.get(name) ?? []) as Handler[]) last = await h({ type: name, ...event }, ctx);
-		return last as Record<string, unknown> | undefined;
-	};
-	const tool = ext.tools.get("mandate").definition;
+	const m = await loadExtension(join(HERE, "index.ts"), HERE);
+	const tool = m.ext.tools.get("mandate").definition;
 	const callTool = async (params: Record<string, unknown>) => {
-		const r = await tool.execute("id", params, undefined, undefined, ctx);
+		const r = await tool.execute("id", params, undefined, undefined, m.ctx);
 		return r.content[0].text as string;
 	};
 	const userSays = async (text: string) => {
-		entries.push({ type: "message", message: { role: "user", content: text } });
-		await fire("input", { text, source: "interactive" });
+		m.entries.push({ type: "message", message: { role: "user", content: text } });
+		await m.fire("input", { text, source: "interactive" });
 	};
-	const bash = (command: string) => fire("tool_call", { toolName: "bash", toolCallId: "t", input: { command } });
-	await fire("session_start", { reason: "startup" });
-	return { fire, callTool, userSays, bash, bus, appended, notes, status, entries, otherBranch, ext };
+	return { ...m, callTool, userSays };
 }
 
 test("a question starts in look and edits are blocked", async () => {
@@ -186,12 +150,10 @@ test("no send-back in look, after a block, or when another extension already con
 
 test("/allow and /revoke manage grants", async () => {
 	const m = await setup();
-	const cmd = (name: string) => m.ext.commands.get(name).handler;
-	const ctx = { hasUI: false, ui: { notify: (s: string) => m.notes.push(s), setStatus: () => {}, theme: { fg: (_c: string, s: string) => s } } };
-	await cmd("allow")("pr issue", ctx);
+	await m.command("allow", "pr issue");
 	assert.match(m.notes.at(-1) ?? "", /Allowed: pr, issue/);
-	await cmd("revoke")("pr", ctx);
+	await m.command("revoke", "pr");
 	assert.match(m.notes.at(-1) ?? "", /Allowed now: issue/);
-	await cmd("allow")("everything", ctx);
+	await m.command("allow", "everything");
 	assert.match(m.notes.at(-1) ?? "", /Use \/allow/);
 });
