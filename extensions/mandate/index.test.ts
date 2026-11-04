@@ -117,7 +117,8 @@ const settle = (text: string, extra: Record<string, unknown> = {}) => ({
 	outcome: "completed",
 	entries: [],
 	continue: false,
-	context: { canContinue: true, contextMessages: [{ role: "assistant", content: [{ type: "text", text }] }] },
+	// The real shape: right after the assistant's reply, canContinue is false
+	context: { canContinue: false, contextMessages: [{ role: "assistant", content: [{ type: "text", text }] }] },
 	...extra,
 });
 

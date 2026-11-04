@@ -108,15 +108,11 @@ export default function (pi: ExtensionAPI) {
 	// Right before pi settles after a reply, ask it to continue if the goal is not done
 	pi.on("agent_before_settle", async (event, ctx) => {
 		if (!goal || goal.status !== "active") return undefined;
-		if (event.outcome === "aborted") {
-			finish(ctx, "stopped", "Stopped with Esc, so the goal was dropped too. Run /goal again to continue.", "warning");
-			return undefined;
-		}
+		if (event.outcome === "aborted") return undefined;
 		if (event.outcome === "error") {
 			finish(ctx, "stopped", "Stopped on an error, so the goal was dropped too.", "warning");
 			return undefined;
 		}
-		if (!event.context.canContinue) return undefined;
 		if (goal.round >= MAX_ROUNDS) {
 			finish(ctx, "stopped", `Asked it to continue ${MAX_ROUNDS} times without finishing, so it stopped.`, "warning");
 			return undefined;
@@ -124,9 +120,15 @@ export default function (pi: ExtensionAPI) {
 		goal.round += 1;
 		showStatus(ctx);
 		return {
-			entries: [{ type: "custom_message" as const, customType: "goal", content: nudge(goal), display: true }],
+			// Keep what earlier handlers proposed at this boundary
+			entries: [...event.entries, { type: "custom_message" as const, customType: "goal", content: nudge(goal), display: true }],
 			continue: true,
 		};
+	});
+
+	// Esc skips agent_before_settle altogether, so a stopped goal is caught here
+	pi.on("agent_settled", async (event, ctx) => {
+		if (event.aborted && goal?.status === "active") finish(ctx, "stopped", "Stopped with Esc, so the goal was dropped too. Run /goal again to continue.", "warning");
 	});
 
 	pi.on("session_start", async (_event, ctx) => {

@@ -20,6 +20,9 @@ It is grown one piece at a time: only things that were actually missed while usi
   - `/focus <focus>`, `/decided <decision>`, `/rejected <option>`, `/now`, `/anchor clear`. A goal set with `/goal` becomes the focus
 - `extensions/goal/` — `/goal <goal>` makes the AI define done criteria and keep working until they hold
   - Stops when the AI reports done or blocked through the goal tool, or on Esc, an error, or after 15 rounds. `/goal` shows the state, `/goal stop` gives up
+- `extensions/reply/` — makes the final reply fit its reader, and says when a long run is done
+  - Before pi settles, the reply is sent back once to be rewritten when it is English to a Japanese writer, over 600 characters or 15 lines without a request for detail, mentions `#123` with no title or link, asks "A or B?" without spelling the options out, or opens with a preamble. The first version is dropped from the AI's context
+  - Runs of 30 seconds or more end with a macOS notification showing the first line of the reply. `/reply` shows the rules
 - `extensions/lens/` — draws one lens card per session (doubt yourself, a better plan, laziness, impatience, hubris, …) and shows it below the editor
   - The AI gets the same card and adds one "Lens:" line to its reply only when it truly applies
   - `/lens` draws again, `/lens add <name>: <question>` adds a card, `/lens list` shows the deck. The deck is `lenses.json`
