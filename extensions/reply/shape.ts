@@ -20,8 +20,9 @@ export function japaneseShare(text: string): number {
 export function asksForDetail(userText: string): boolean {
 	return (
 		/詳しく|詳細|全部|全て|すべて|一覧|列挙|洗い出|説明して|教えて.*(?:全|詳)|\b(?:in detail|details?|explain|everything|list all|full)\b/i.test(userText) ||
-		// An explicit count ("20 個", "10 points") asks for that much
-		/\d+\s*(?:個|件|点|行|項目|案|\s?(?:items?|points?|ideas?|lines?))/i.test(userText)
+		// An explicit count asked for ("20 個出して", "list 10 ideas"). A line number in an error message is not one
+		/\d+\s*(?:個|件|点|項目|案|つ)(?:ほど|くらい|ぐらい)?\s*(?:の\S{0,12}?)?(?:を|は)?\s*(?:出して|挙げて|書いて|教えて|考えて|ほしい|欲しい|リスト|列挙)/.test(userText) ||
+		/\b(?:give|list|write|suggest|show)\s+(?:me\s+)?\d+\s+(?:\w+\s+)?(?:items?|points?|ideas?|ways?|examples?|options?)\b/i.test(userText)
 	);
 }
 
@@ -32,13 +33,19 @@ export function asksForEnglish(userText: string): boolean {
 
 const withoutCode = (text: string) => text.replace(/```[\s\S]*?```/g, "").replace(/`[^`\n]*`/g, "x");
 
-const PREAMBLE = /^(?:確認しました|承知しました|了解しました|かしこまりました|まず(?:は)?[、,]|以下(?:に|の|で)|結論から言うと|Let me\b|Sure[,!.]|Great[,!.]|Okay[,!.]|Certainly\b|I'll\b)/i;
+// Openers that say nothing yet. "以下の 3 ファイルを直しました" or "I'll keep it" can be the conclusion, so they are not here
+const PREAMBLE = /^(?:確認しました[。、！!]|承知しました|了解しました|かしこまりました|まず(?:は)?[、,]|結論から言うと|Let me\b|Sure[,!.]|Great[,!.]|Okay[,!.]|Certainly\b)/i;
+// Words that make a #123 on the same line a color, not an issue
+const COLOR = /色|カラー|colou?r|background|fill|stroke|border|rgb|hex|css|theme/i;
 
 /** Issue or PR numbers mentioned without saying what they are */
 function bareRefs(text: string): string[] {
 	const out: string[] = [];
 	for (const m of text.matchAll(/(?<![\w/[#&])#(\d+)\b/g)) {
 		const n = m[1];
+		// #333 or #000000 next to a word about color is a color
+		const line = text.slice(text.lastIndexOf("\n", m.index) + 1, text.indexOf("\n", m.index) === -1 ? undefined : text.indexOf("\n", m.index));
+		if ([3, 4, 6, 8].includes(n.length) && COLOR.test(line)) continue;
 		const before = text.slice(Math.max(0, (m.index ?? 0) - 1), m.index);
 		const after = text.slice((m.index ?? 0) + m[0].length, (m.index ?? 0) + m[0].length + 3);
 		const linked = before === "[" || new RegExp(`/(?:issues|pull)/${n}\\b`).test(text);
@@ -50,8 +57,10 @@ function bareRefs(text: string): string[] {
 
 /** "A or B?" style choices whose letters are never spelled out */
 function bareOptions(text: string): boolean {
-	const mentions = /(?:^|[\s（(「])([A-C])(?:案)?\s*(?:と|か|or|\/|、)\s*([A-C])(?:案)?(?![A-Za-z])/m.test(text);
-	const defined = /^\s*(?:[-*]\s*|\*\*)?[(（]?[A-C](?:案)?[.:)）：]/m.test(text);
+	// "A/B テスト" and "A/B testing" name a method, not a choice
+	const mentions = /(?:^|[\s（(「])([A-C])(?:案)?\s*(?:と|か|or|\/|、)\s*([A-C])(?:案)?(?![A-Za-z])(?!\s*(?:テスト|test))/im.test(text);
+	// "A. ...", "- A: ...", "**A**: ...", "- **A案**：..."
+	const defined = /^\s*(?:[-*]\s*)?(?:\*\*)?[(（]?[A-C](?:案)?(?:\*\*)?\s*[.:)）：]/m.test(text);
 	return mentions && !defined;
 }
 

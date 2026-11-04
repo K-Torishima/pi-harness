@@ -15,22 +15,20 @@
 import { execFile } from "node:child_process";
 import { basename } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { onRequestStart, textOf } from "../lib/request.ts";
 import { checkReply, MAX_CHARS, MAX_LINES } from "./shape.ts";
 
 // Runs at least this long end with a notification
 const NOTIFY_AFTER_MS = 30_000;
 
-type TextPart = { type?: string; text?: string };
 type Msg = { role?: string; content?: unknown };
-const textOf = (content: unknown): string =>
-	typeof content === "string" ? content : Array.isArray(content) ? (content as TextPart[]).map((p) => (p?.type === "text" ? (p.text ?? "") : "")).join("\n") : "";
 
-/** The text of the latest message with this role on the current branch */
-function latest(ctx: ExtensionContext, role: "user" | "assistant"): string {
+/** The text of the AI's latest reply on the current branch */
+function latestReply(ctx: ExtensionContext): string {
 	const entries = ctx.sessionManager.getBranch() as { type: string; message?: Msg }[];
 	for (let i = entries.length - 1; i >= 0; i--) {
 		const m = entries[i].message;
-		if (entries[i].type === "message" && m?.role === role) return textOf(m.content);
+		if (entries[i].type === "message" && m?.role === "assistant") return textOf(m.content);
 	}
 	return "";
 }
@@ -39,20 +37,16 @@ export default function (pi: ExtensionAPI) {
 	// Per request: whether the reply was already sent back, and when the request started
 	let sentBack = false;
 	let startedAt = 0;
+	// What the user typed last. A /goal kickoff or a skill expansion is not their own wording, so it does not replace it
+	let typed = "";
 
-	pi.on("input", async (event) => {
-		if (event.source !== "extension" && !event.streamingBehavior) {
-			sentBack = false;
-			startedAt = Date.now();
-		}
-		return { action: "continue" as const };
+	onRequestStart(pi, (text, source) => {
+		sentBack = false;
+		startedAt = Date.now();
+		if (source !== "extension") typed = text;
 	});
 
-	pi.on("agent_start", async () => {
-		if (startedAt === 0) startedAt = Date.now();
-	});
-
-	pi.on("agent_before_settle", async (event, ctx) => {
+	pi.on("agent_before_settle", async (event) => {
 		// Do not check event.context.canContinue here: it is false whenever the context ends with the assistant's reply,
 		// and turns true only once the message below is added
 		if (sentBack || event.outcome === "aborted" || event.outcome === "error" || event.continue) return undefined;
@@ -61,7 +55,7 @@ export default function (pi: ExtensionAPI) {
 		const id = last?.sourceEntry?.id;
 		if (!id) return undefined;
 		const replyText = (last?.messages ?? []).filter((m) => m.role === "assistant").map((m) => textOf(m.content)).join("\n");
-		const problems = checkReply(replyText, latest(ctx, "user"));
+		const problems = checkReply(replyText, typed);
 		if (problems.length === 0) return undefined;
 
 		sentBack = true;
@@ -93,7 +87,7 @@ export default function (pi: ExtensionAPI) {
 		const took = startedAt > 0 ? Date.now() - startedAt : 0;
 		startedAt = 0;
 		if (event.aborted || took < NOTIFY_AFTER_MS || !ctx.hasUI || process.platform !== "darwin") return;
-		const first = latest(ctx, "assistant")
+		const first = latestReply(ctx)
 			.split("\n")
 			.map((l) => l.replace(/[*_`#>]/g, "").trim())
 			.find(Boolean);

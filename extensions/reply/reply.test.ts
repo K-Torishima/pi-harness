@@ -25,6 +25,7 @@ test("length counts prose only, and asking for detail lifts the limit", () => {
 	assert.match(checkReply(long, JA)[0], /too long \(700 characters/);
 	assert.deepEqual(checkReply(long, "詳しく説明して"), []);
 	assert.deepEqual(checkReply(long, "改善案を 20 個出して"), [], "an explicit count asks for that much");
+	assert.match(checkReply(long, "src/foo.ts の 120 行目でエラーが出る、直して").join(), /too long/, "a line number is not a count");
 	assert.deepEqual(checkReply(`短いです。\n\`\`\`\n${"x\n".repeat(80)}\`\`\``, JA), []);
 	assert.match(checkReply(Array.from({ length: 20 }, (_, i) => `- 項目 ${i}`).join("\n"), JA)[0], /20 lines/);
 });
@@ -36,17 +37,22 @@ test("issue numbers need a title or link", () => {
 	assert.deepEqual(checkReply("#39 (Checks 権限) は管理者待ちです。", JA), []);
 	assert.deepEqual(checkReply("https://github.com/o/r/pull/12 の #12 はマージ済みです。", JA), []);
 	assert.deepEqual(checkReply("色は #fff にしました。見出しは ## です。", JA), []);
+	assert.deepEqual(checkReply("背景色は #333 に変えました。", JA), [], "a color made of digits");
+	assert.match(checkReply("#333 の件、色の指定を直しました。\n#3333 は別です。", JA).join(), /#3333/);
 });
 
 test("letter options must be spelled out", () => {
 	assert.match(checkReply("A と B のどちらにしますか？", JA).join(), /Spell the options out/);
 	assert.deepEqual(checkReply("どちらにしますか？\nA. Postgres を使う\nB. SQLite を使う", JA), []);
+	assert.deepEqual(checkReply("- **A**: Postgres を使う\n- **B**: SQLite を使う\nA か B で選んでください。", JA), []);
+	assert.deepEqual(checkReply("A/B テストの仕組みを追加しました。", JA), [], "A/B testing is not a choice");
 });
 
 test("a preamble first line is flagged", () => {
 	assert.match(checkReply("確認しました。テストは通っています。", JA).join(), /preamble/);
 	assert.match(checkReply("Let me check that. Done.", "check it").join(), /preamble/);
 	assert.deepEqual(checkReply("テストは通っています。確認しました。", JA), []);
+	assert.deepEqual(checkReply("以下の 3 ファイルを直しました。", JA), [], "a conclusion that starts with 以下");
 });
 
 test("helpers", () => {
@@ -85,6 +91,21 @@ test("a reply with problems is sent back once, with the first version dropped fr
 	assert.deepEqual(entries[0], { type: "context_edit", targetId: "a1", replacement: null });
 	assert.match(String(entries[1].content), /Reply in Japanese[\s\S]*#39 by number only[\s\S]*<<<\nI checked #39/);
 	assert.equal(await m.settle(), undefined, "only once per request");
+});
+
+test("a queued follow-up or a /goal kickoff starts a new request; the language check keeps the user's own words", async () => {
+	const m = await setup("I checked it and it is waiting on an admin to grant the permission.");
+	assert.equal((await m.settle())?.continue, true);
+	await m.fire("input", { text: "Goal: 権限を確認する", source: "extension" });
+	const again = await m.settle();
+	assert.equal(again?.continue, true, "the kickoff started a new request, and the user's Japanese still counts");
+
+	const f = await setup("I checked it and it is waiting on an admin to grant the permission.");
+	await f.settle();
+	await f.fire("input", { text: "次は？", source: "interactive", streamingBehavior: "followUp" });
+	assert.equal(await f.settle(), undefined, "still the first request until the follow-up's run starts");
+	await f.fire("agent_start");
+	assert.equal((await f.settle())?.continue, true);
 });
 
 test("a fine reply, or one another extension already continues, is left alone", async () => {

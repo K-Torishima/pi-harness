@@ -26,6 +26,14 @@ test("an active goal keeps going after a reply, even though canContinue is false
 	assert.match(String((r?.entries as { content?: string }[])[0].content), /\[goal 1\/15\]/);
 });
 
+test("goal keeps entries an earlier handler proposed at the same boundary", async () => {
+	const m = await setup();
+	await m.start("add tests");
+	const earlier = { type: "context_edit", targetId: "a1", replacement: null };
+	const r = await m.fire("agent_before_settle", settle({ entries: [earlier] }));
+	assert.deepEqual((r?.entries as unknown[])[0], earlier);
+});
+
 test("a goal stops on done, blocked, Esc, and errors", async () => {
 	const m = await setup();
 	await m.start("add tests");
@@ -33,8 +41,9 @@ test("a goal stops on done, blocked, Esc, and errors", async () => {
 	await m.call({ action: "done", evidence: "ran make test" });
 	assert.equal(await m.fire("agent_before_settle", settle()), undefined);
 
+	// Esc: pi skips agent_before_settle and only fires agent_settled with aborted
 	const aborted = await setup();
 	await aborted.start("x");
-	assert.equal(await aborted.fire("agent_before_settle", settle({ outcome: "aborted" })), undefined);
+	await aborted.fire("agent_settled", { aborted: true });
 	assert.equal(await aborted.fire("agent_before_settle", settle()), undefined, "the goal was dropped");
 });

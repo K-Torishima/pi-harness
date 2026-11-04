@@ -21,6 +21,7 @@
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { textOf } from "../lib/request.ts";
 import { asksPermission, classifyTool, GRANTS, type Grant, MODES, type Mode, quoteMatches } from "./rules.ts";
 
 type State = { mode: Mode; quote: string; grants: Grant[] };
@@ -39,10 +40,6 @@ const MODE_MEANING: Record<Mode, string> = {
 	plan: "read and propose a plan; change nothing",
 	do: "change local files and run commands for this request",
 };
-
-type TextPart = { type?: string; text?: string };
-const textOf = (content: unknown): string =>
-	typeof content === "string" ? content : Array.isArray(content) ? (content as TextPart[]).map((p) => (p?.type === "text" ? (p.text ?? "") : "")).join("\n") : "";
 
 /** The text of the user's latest message on the current branch (not on branches left with /tree) */
 function latestUserText(ctx: ExtensionContext): string {
