@@ -31,6 +31,11 @@ It is grown one piece at a time: only things that were actually missed while usi
   - Blocks `sudo`, `rm -rf`, reading `.env`, force pushes, and git commands that throw away work
   - Personal rules go in `rules.local.json` (gitignored) and are merged in
   - Commands you type yourself with `!` are never blocked. `/guard` lists the rules
+- `extensions/mandate/` — lets the AI act only on what you asked for, and stops it asking about what you already allowed
+  - Each message you type starts in `look` (read and answer). The AI moves to `do` by quoting your words; a quote that is not in your latest message is rejected
+  - In `look` and `plan`, edits and changing commands are blocked. Outward actions (`git push`, PR and issue writes, deploys, API writes) need a grant, which lasts for the session
+  - In `do`, a reply that ends by asking permission to go on is sent back once to carry on. `/goal` switches to `do`
+  - `/mode look|plan|do`, `/allow push|pr|issue|deploy|api`, `/revoke <grant>|all`, `/mandate`
 
 ### Working across sessions
 
@@ -54,6 +59,7 @@ It is grown one piece at a time: only things that were actually missed while usi
 ```bash
 make        # build the voice input helper (macOS 26 or later, Apple Silicon)
 make link   # link agent/APPEND_SYSTEM.md into ~/.pi/agent/
+make test   # run extension tests (needs pi installed)
 pi install /path/to/pi-harness
 ```
 

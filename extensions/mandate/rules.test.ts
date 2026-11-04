@@ -1,0 +1,106 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { asksPermission, classifyCommand, classifyTool, quoteMatches } from "./rules.ts";
+
+const kind = (cmd: string) => classifyCommand(cmd).kind;
+const grant = (cmd: string) => {
+	const e = classifyCommand(cmd);
+	return e.kind === "outward" ? e.grant : undefined;
+};
+
+test("read-only commands stay read", () => {
+	for (const cmd of [
+		"ls -la",
+		"git status --short",
+		"git log --oneline | head -3",
+		"git diff --cached",
+		"git branch -a",
+		"git stash list",
+		"git tag -l",
+		"git worktree list",
+		'rg "rm -rf" src',
+		"jq '.a > 1' data.json",
+		"grep -n foo file 2>/dev/null",
+		"npm test 2>&1 | tail",
+		"gh pr view 12 --json title",
+		"gh issue list --limit 5",
+		"gh api repos/o/r/pulls",
+		"gh api graphql -f query='{ viewer { login } }'",
+		"curl -s https://example.com",
+		"cat <<'EOF'\nrm -rf / and git push\nEOF",
+		"node --test extensions/**/*.test.ts",
+	]) {
+		assert.equal(kind(cmd), "read", cmd);
+	}
+});
+
+test("local changes are detected", () => {
+	for (const cmd of [
+		"rm foo.txt",
+		"mkdir -p out && touch out/a",
+		"cd src && mv a.ts b.ts",
+		"echo hi > notes.md",
+		"cat a >> b",
+		"sed -i '' 's/a/b/' file",
+		"git add -A",
+		"git commit -m 'fix push handling'",
+		"git checkout -b feat/x",
+		"git stash",
+		"git -C ../repo reset --soft HEAD~1",
+		"npm install lodash",
+		"pip install requests",
+		"find . -name '*.tmp' | xargs rm",
+		"cat > out.txt <<EOF\nhello\nEOF",
+	]) {
+		assert.equal(kind(cmd), "local", cmd);
+	}
+});
+
+test("outward actions map to their grant", () => {
+	assert.equal(grant("git push origin main"), "push");
+	assert.equal(grant("git -C repo push"), "push");
+	assert.equal(grant("sh -c 'git push'"), "push");
+	assert.equal(grant("gh pr create --fill"), "pr");
+	assert.equal(grant("gh pr merge 3 --squash"), "pr");
+	assert.equal(grant("gh issue comment 39 --body x"), "issue");
+	assert.equal(grant("gh issue edit 175 --body-file b.md"), "issue");
+	assert.equal(grant("npx wrangler deploy --env dev"), "deploy");
+	assert.equal(grant("gh workflow run ci.yml"), "deploy");
+	assert.equal(grant("gh api -X POST repos/o/r/issues -f title=x"), "api");
+	assert.equal(grant("gh api repos/o/r/labels -f name=bug"), "api");
+	assert.equal(grant("gh api graphql -f query='mutation { x }'"), "api");
+	assert.equal(grant("curl -X POST https://hooks.slack.com/x -d '{}'"), "api");
+	assert.equal(grant("curl --json '{}' https://api.example.com"), "api");
+});
+
+test("a commit message that mentions push is not a push", () => {
+	assert.equal(kind("git commit -m 'stop the push loop'"), "local");
+});
+
+test("edit and write tools are local changes; others are read", () => {
+	assert.equal(classifyTool("edit", { path: "a.ts" }).kind, "local");
+	assert.equal(classifyTool("write", { path: "a.ts" }).kind, "local");
+	assert.equal(classifyTool("read", { path: "a.ts" }).kind, "read");
+	assert.equal(classifyTool("bash", { command: "git push" }).kind, "outward");
+});
+
+test("quotes must come from the user's message", () => {
+	assert.ok(quoteMatches("実装して", "じゃあそれ実装して！"));
+	assert.ok(quoteMatches("push して", "コミットしてpushして"));
+	assert.ok(quoteMatches("ＯＫ", "ok、お願い"));
+	assert.ok(!quoteMatches("pushして", "コミットだけして"));
+	assert.ok(!quoteMatches("", "anything"));
+	assert.ok(!quoteMatches("。", "anything。"));
+});
+
+test("permission questions at the end of a reply are detected", () => {
+	assert.ok(asksPermission("修正しました。次にテストを追加してよいですか？"));
+	assert.ok(asksPermission("Done with step 1. Shall I continue with step 2?"));
+	assert.ok(asksPermission("準備できました。進めますか？"));
+	assert.ok(asksPermission("1つ目を直しました。次も進めてよいですか？"));
+	assert.ok(asksPermission("コミットしても大丈夫ですか？"));
+	assert.ok(asksPermission("pushしていい？"));
+	assert.ok(asksPermission("よければ「進めて」と送ってください。"));
+	assert.ok(!asksPermission("修正してテストも通りました。"));
+	assert.ok(!asksPermission("A と B のどちらにしますか？"));
+});
