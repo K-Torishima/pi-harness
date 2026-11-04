@@ -137,6 +137,7 @@ test("blamesMode spots a reply that held back because of the mode", () => {
 	assert.ok(blamesMode("現在は読み取り専用（look）なので、変更していません。"));
 	assert.ok(blamesMode("変更可能なモードになったら直します。"));
 	assert.ok(blamesMode("I'm in look mode, so I did not change anything."));
+	assert.ok(!blamesMode("ボリュームが read-only でマウントされているためです。"), "explaining read-only is not a stall");
 	assert.ok(!blamesMode("末尾に改行を足しました。"));
 	assert.ok(!blamesMode("The plan is to look at the logs first."), "plan and look as ordinary words");
 });

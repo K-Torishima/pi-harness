@@ -11,7 +11,8 @@
  * - Outward actions (git push, PR / issue writes, deploys, API writes) need a grant: push / pr / issue / deploy / api.
  *   Grants last for the session, so you are not asked again
  * - In look / plan, edits, writes, and changing commands are blocked. Outward actions without a grant are blocked in every mode
- * - In do, a reply that ends by asking permission to go on gets sent back once, to carry on instead
+ * - A reply that stops short is sent back once: in do, one that ends by asking permission to go on;
+ *   in the default look, one that asks permission or blames the mode instead of raising it
  * - /goal switches to do, quoting the goal
  *
  * You use /mode [look|plan|do], /allow <grant...>, /revoke [grant|all], and /mandate (show).
@@ -36,8 +37,8 @@ const MandateParams = Type.Object({
 });
 
 const MODE_MEANING: Record<Mode, string> = {
-	look: "read and answer only; change nothing",
-	plan: "read and propose a plan; change nothing",
+	look: "read and answer; edits are blocked until the mode is raised",
+	plan: "read and propose a plan; edits are blocked until the mode is raised",
 	do: "change local files and run commands for this request",
 };
 
@@ -81,6 +82,9 @@ export default function (pi: ExtensionAPI) {
 		pi.appendEntry("mandate", { grants: state.grants });
 		render(ctx);
 	};
+
+	/** Still in the look every request starts in: not raised, and not chosen by the user with /mode */
+	const startedInLook = () => state.mode === "look" && state.quote === "";
 
 	const setMode = (ctx: ExtensionContext | undefined, mode: Mode, quote: string) => {
 		state.mode = mode;
@@ -129,9 +133,9 @@ export default function (pi: ExtensionAPI) {
 	// Before every request, tell the AI what it is allowed to do
 	pi.on("before_agent_start", async () => {
 		const lines = [
-			state.mode === "look" && !state.quote
-				? "[mandate] This request starts in look mode. That is the default for every new message, not something the user asked for: raise it yourself when their message asks for a change."
-				: `[mandate] Mode for this request: ${state.mode} (${MODE_MEANING[state.mode]})${state.quote ? ` — from the user's words "${state.quote}"` : ""}.`,
+			startedInLook()
+				? `[mandate] This request starts in look mode (${MODE_MEANING.look}). That is the default for every new message, not something the user asked for: raise it yourself when their message asks for a change.`
+				: `[mandate] Mode for this request: ${state.mode} (${MODE_MEANING[state.mode]}) — set from "${state.quote}".`,
 			`Outward actions allowed this session: ${state.grants.length > 0 ? state.grants.join(", ") : "none"}.`,
 			"- If the user's latest message asks you to change, build, fix, or run something, call mandate set_mode do with their exact words as quote, then do it. Do not ask for permission first.",
 			"- If it only asks a question, or asks you to look, check, or explain, stay in look and answer. Do not start changing things.",
@@ -174,7 +178,7 @@ export default function (pi: ExtensionAPI) {
 
 	// Send a reply back once when it stops short:
 	// - in do, it ends by asking permission for something inside the request
-	// - in look or plan, it says the mode held it back, without ever trying to raise the mode
+	// - in the default look (not a look or plan the user chose), it ends by asking permission or by blaming the mode
 	pi.on("agent_before_settle", async (event) => {
 		if (nudged || blocked) return undefined;
 		if (event.outcome === "aborted" || event.outcome === "error" || event.continue) return undefined;
@@ -183,8 +187,8 @@ export default function (pi: ExtensionAPI) {
 		let content: string | undefined;
 		if (state.mode === "do" && asksPermission(text)) {
 			content = `[mandate] You are in do mode for this request ("${state.quote}"), but your reply ends by asking for permission. If what you are asking about is part of this request and needs no outward grant, do it now and report. If it truly needs the user (a choice between options, or an outward action not granted), end with that one question.`;
-		} else if (state.mode !== "do" && blamesMode(text)) {
-			content = `[mandate] Your reply says the ${state.mode} mode held you back, but the mode is yours to raise. Re-read the user's latest message: if it asks you to change, build, fix, or run something, call mandate set_mode do with their exact words now and do it. If it only asks a question or asks you to look, end with the answer and do not mention modes.`;
+		} else if (startedInLook() && (blamesMode(text) || asksPermission(text))) {
+			content = `[mandate] Your reply stops short in look mode, but look is only the default, and the mode is yours to raise. Re-read the user's latest message: if it asks you to change, build, fix, or run something, call mandate set_mode do with their exact words now and do it. If it only asks a question or asks you to look, end with the answer and do not mention modes.`;
 		}
 		if (!content) return undefined;
 		nudged = true;
@@ -218,7 +222,7 @@ export default function (pi: ExtensionAPI) {
 		handler: async (args, ctx) => {
 			const mode = args.trim() as Mode;
 			if (!MODES.includes(mode)) return ctx.ui.notify(`Mode: ${state.mode} (${MODE_MEANING[state.mode]}). Use /mode look|plan|do.`, "info");
-			setMode(ctx, mode, mode === "look" ? "" : `/mode ${mode}`);
+			setMode(ctx, mode, `/mode ${mode}`);
 			ctx.ui.notify(`Mode set to ${mode}`, "info");
 		},
 	});
