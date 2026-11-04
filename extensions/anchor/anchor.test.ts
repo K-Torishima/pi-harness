@@ -3,14 +3,32 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { loadExtension } from "../../test/load-extension.ts";
-import { decisionKind, fresh, push, reminder } from "./ledger.ts";
+import { decisionKinds, fresh, push, reminder } from "./ledger.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
-test("decisionKind spots decisions and rejections, not questions", () => {
-	for (const t of ["じゃあ Postgres にしよう", "それで行こう", "A案で決定", "SQLite でいいよ", "let's go with the queue"]) assert.equal(decisionKind(t), "decides", t);
-	for (const t of ["ポーリングはいらない", "キャッシュはなしで", "それはやめよう", "Redis は使わない", "don't use polling"]) assert.equal(decisionKind(t), "rejects", t);
-	for (const t of ["Postgres にしようか？", "どこまで終わった？", "テスト足して", "ログを見て"]) assert.equal(decisionKind(t), undefined, t);
+test("decisionKinds spots decisions and rejections", () => {
+	for (const t of ["じゃあ Postgres にしよう", "それで行こう", "A案で決定", "SQLite でいいよ", "let's go with the queue", "we decided to use SQS"])
+		assert.deepEqual(decisionKinds(t), ["decides"], t);
+	for (const t of ["ポーリングはいらない", "キャッシュはなしで", "それはやめよう", "Redis は使わない", "don't use polling"]) assert.deepEqual(decisionKinds(t), ["rejects"], t);
+	assert.deepEqual(decisionKinds("Redis はやめて Postgres にしよう"), ["decides", "rejects"]);
+});
+
+test("decisionKinds ignores questions, wavering, and ordinary instructions", () => {
+	for (const t of [
+		"Postgres にしようか？",
+		"Postgres にしようかな",
+		"どっちにしようか迷ってる",
+		"どこまで終わった？",
+		"テスト足して",
+		"不要なファイルを消して",
+		"心配いらない",
+		"drop the table and recreate it",
+		"don't do anything yet",
+		"I haven't decided yet",
+		"not sure what to go with.",
+	])
+		assert.deepEqual(decisionKinds(t), [], t);
 });
 
 test("push keeps the newest items without duplicates", () => {
@@ -20,11 +38,11 @@ test("push keeps the newest items without duplicates", () => {
 
 test("reminder lists decided, rejected, and open, and asks to record a pending decision", () => {
 	const s = { ...fresh(), focus: "build the sync", decisions: ["use webhooks"], rejected: ["polling"], open: ["retry count"] };
-	const text = reminder(s, { kind: "rejects", text: "ポーリングはいらない" });
+	const text = reminder(s, { kinds: ["decides", "rejects"], text: "Redis はやめて Postgres にしよう" });
 	assert.match(text, /Decided \(treat as settled, not as proposals\):\n- use webhooks/);
 	assert.match(text, /Rejected \(do not propose again\):\n- polling/);
 	assert.match(text, /Still open .*:\n1\. retry count/);
-	assert.match(text, /looks like it rejects something: "ポーリングはいらない".*add_rejected/);
+	assert.match(text, /looks like it decides and rejects something.*add_decision and add_rejected/);
 	assert.doesNotMatch(reminder(fresh()), /Decided \(|Rejected \(|Still open|looks like/);
 });
 
@@ -32,77 +50,95 @@ async function setup() {
 	const m = await loadExtension(join(HERE, "index.ts"), HERE);
 	const tool = m.ext.tools.get("anchor").definition;
 	const call = async (action: string, text: string) => (await tool.execute("id", { action, text }, undefined, undefined, m.ctx)).content[0].text as string;
-	const lastCall = async () => {
+	/** The reminder text in a model call made on a one-message conversation */
+	const reminderNow = async () => {
 		const r = await m.fire("context", { messages: [{ role: "user", content: "hi", timestamp: 1 }] });
 		const messages = r?.messages as { role: string; content: string }[];
-		return messages;
+		return messages.find((x) => x.role === "custom")?.content ?? "";
 	};
-	return { ...m, call, lastCall };
+	const roles = async (convo: { role: string }[]) => ((await m.fire("context", { messages: convo }))?.messages as { role: string }[]).map((x) => x.role);
+	return { ...m, call, reminderNow, roles };
 }
 
-test("the reminder is added to every model call, right before the user's latest message, and not stored", async () => {
+test("the reminder goes right after the latest user message and is not stored", async () => {
 	const m = await setup();
 	await m.call("add_decision", "use webhooks");
-	const messages = await m.lastCall();
-	assert.deepEqual(
-		messages.map((x) => x.role),
-		["custom", "user"],
-	);
-	assert.match(messages[0].content, /- use webhooks/);
+	assert.deepEqual(await m.roles([{ role: "user" }]), ["user", "custom"]);
+	assert.match(await m.reminderNow(), /- use webhooks/);
 	assert.equal(m.appended.filter((a) => a.customType !== "anchor").length, 0, "only state entries are stored");
 });
 
-test("after a tool result, the conversation still ends with the tool result (no trailing reminder to loop on)", async () => {
+test("after a tool result the reminder stays before the tool calls, so there is nothing trailing to loop on", async () => {
 	const m = await setup();
-	const convo = [
-		{ role: "user", content: "old", timestamp: 1 },
-		{ role: "assistant", content: [], timestamp: 2 },
-		{ role: "user", content: "new request", timestamp: 3 },
-		{ role: "assistant", content: [{ type: "toolCall", name: "anchor" }], timestamp: 4 },
-		{ role: "toolResult", content: [{ type: "text", text: "Updated." }], timestamp: 5 },
-	];
-	const r = (await m.fire("context", { messages: convo }))?.messages as { role: string; content: unknown }[];
-	assert.deepEqual(
-		r.map((x) => x.role),
-		["user", "assistant", "custom", "user", "assistant", "toolResult"],
-	);
+	assert.deepEqual(await m.roles([{ role: "user" }, { role: "assistant" }, { role: "user" }, { role: "assistant" }, { role: "toolResult" }]), [
+		"user",
+		"assistant",
+		"user",
+		"custom",
+		"assistant",
+		"toolResult",
+	]);
 });
 
-test("a typed decision stays flagged until the AI records it", async () => {
+test("in a /goal loop the reminder follows the latest nudge, not the kickoff", async () => {
 	const m = await setup();
-	await m.fire("input", { text: "ポーリングはいらない", source: "interactive" });
-	assert.match((await m.lastCall())[0].content, /looks like it rejects/);
-	await m.call("add_rejected", "polling");
-	assert.doesNotMatch((await m.lastCall())[0].content, /looks like it/);
-	await m.fire("input", { text: "どう思う？", source: "interactive" });
-	assert.doesNotMatch((await m.lastCall())[0].content, /looks like it/);
+	const convo = [{ role: "user" }, { role: "assistant" }, { role: "toolResult" }, { role: "assistant" }, { role: "custom" }, { role: "assistant" }, { role: "toolResult" }];
+	assert.deepEqual(await m.roles(convo), ["user", "assistant", "toolResult", "assistant", "custom", "custom", "assistant", "toolResult"]);
 });
 
-test("set_next stops updating after two calls in one run, and resets on the next run", async () => {
+test("a typed decision stays flagged until the AI records each kind; an extension message clears it", async () => {
+	const m = await setup();
+	await m.fire("input", { text: "Redis はやめて Postgres にしよう", source: "interactive" });
+	assert.match(await m.reminderNow(), /looks like it decides and rejects/);
+	await m.call("add_rejected", "Redis");
+	assert.match(await m.reminderNow(), /looks like it decides something.*add_decision/);
+	await m.call("add_decision", "Postgres");
+	assert.doesNotMatch(await m.reminderNow(), /looks like it/);
+
+	await m.fire("input", { text: "それでいいよ", source: "interactive" });
+	assert.match(await m.reminderNow(), /looks like it decides/);
+	await m.fire("input", { text: "Goal: ship it", source: "extension" });
+	assert.doesNotMatch(await m.reminderNow(), /looks like it/);
+});
+
+test("set_next stops after two calls per reply, and each user or /goal message starts a new count", async () => {
 	const m = await setup();
 	await m.call("set_next", "one");
 	await m.call("set_next", "two");
 	assert.match(await m.call("set_next", "three"), /already set/);
-	await m.fire("agent_start");
+	await m.fire("message_start", { message: { role: "custom" } });
 	assert.equal(await m.call("set_next", "four"), "Updated.");
+	await m.fire("message_start", { message: { role: "toolResult" } });
+	await m.call("set_next", "five");
+	assert.match(await m.call("set_next", "six"), /already set/);
 });
 
-test("open items can be added and closed by number", async () => {
+test("open items can be closed by a plain number only", async () => {
 	const m = await setup();
 	await m.call("add_open", "retry count");
 	await m.call("add_open", "timeout");
 	assert.match(await m.call("close_open", "5"), /Pass the number/);
+	assert.match(await m.call("close_open", "1,2"), /Pass the number/);
+	assert.match(await m.call("close_open", "2 (timeout)"), /Pass the number/);
 	await m.call("close_open", "1");
-	assert.match((await m.lastCall())[0].content, /1\. timeout/);
+	assert.match(await m.reminderNow(), /1\. timeout/);
 });
 
-test("state is restored from the current branch only", async () => {
+test("state comes from the current branch, on startup and after /tree", async () => {
 	const m = await setup();
 	m.otherBranch.push({ type: "custom", customType: "anchor", data: { focus: "other", decisions: ["from another branch"] } });
 	m.entries.push({ type: "custom", customType: "anchor", data: { focus: "here", rejected: ["polling"] } });
 	await m.fire("session_start", { reason: "resume" });
-	const text = (await m.lastCall())[0].content;
+	const text = await m.reminderNow();
 	assert.match(text, /Current focus: here/);
 	assert.match(text, /- polling/);
 	assert.doesNotMatch(text, /another branch/);
+
+	await m.call("add_decision", "use Postgres");
+	m.entries.length = 0;
+	m.entries.push({ type: "custom", customType: "anchor", data: { focus: "earlier" } });
+	await m.fire("session_tree", {});
+	const after = await m.reminderNow();
+	assert.match(after, /Current focus: earlier/);
+	assert.doesNotMatch(after, /Postgres/);
 });

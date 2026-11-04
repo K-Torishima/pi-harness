@@ -19,7 +19,7 @@
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { type Anchor, decisionKind, fresh, LIMITS, push, reminder } from "./ledger.ts";
+import { type Anchor, decisionKinds, fresh, type Kind, LIMITS, push, reminder } from "./ledger.ts";
 
 const AnchorParams = Type.Object({
 	action: StringEnum(["set_next", "set_focus", "add_decision", "add_rejected", "add_open", "close_open"] as const),
@@ -33,12 +33,18 @@ export default function (pi: ExtensionAPI) {
 	let state: Anchor = fresh();
 	let current: ExtensionContext | undefined;
 	// The user's latest message, when it looks like a decision or rejection that has not been recorded yet
-	let pending: { kind: "decides" | "rejects"; text: string } | undefined;
-	// set_next calls in the current run
+	let pending: { kinds: Kind[]; text: string } | undefined;
+	// set_next calls since the last user or extension message (one /goal round counts as one reply)
 	let setNextCalls = 0;
-	pi.on("agent_start", async () => {
-		setNextCalls = 0;
+	pi.on("message_start", async (event) => {
+		const role = (event.message as { role?: string }).role;
+		if (role === "user" || role === "custom") setNextCalls = 0;
 	});
+	const recorded = (kind: Kind) => {
+		if (!pending) return;
+		pending.kinds = pending.kinds.filter((k) => k !== kind);
+		if (pending.kinds.length === 0) pending = undefined;
+	};
 
 	const render = (ctx: ExtensionContext) => {
 		if (!ctx.hasUI) return;
@@ -90,18 +96,18 @@ export default function (pi: ExtensionAPI) {
 					break;
 				case "add_decision":
 					state.decisions = push(state.decisions, text, LIMITS.decisions);
-					pending = undefined;
+					recorded("decides");
 					break;
 				case "add_rejected":
 					state.rejected = push(state.rejected, text, LIMITS.rejected);
-					pending = undefined;
+					recorded("rejects");
 					break;
 				case "add_open":
 					state.open = push(state.open, text, LIMITS.open);
 					break;
 				case "close_open": {
-					const n = Number.parseInt(text, 10);
-					if (!(n >= 1 && n <= state.open.length)) return reply(`Pass the number of an open item (1-${state.open.length}).`);
+					const n = /^\d+$/.test(text) ? Number(text) : Number.NaN;
+					if (!(n >= 1 && n <= state.open.length)) return reply(`Pass the number of one open item (1-${state.open.length}), and nothing else. Call close_open once per item.`);
 					state.open = state.open.filter((_, i) => i !== n - 1);
 					break;
 				}
@@ -111,29 +117,31 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
-	// Before every model call: the reminder goes right before the user's latest message. It is not stored in the session.
-	// Not at the very end: after a tool result, a trailing "before ending your reply, call set_next" makes the model
-	// call set_next again and again
+	// Before every model call, the reminder goes right after the latest user or extension message (a /goal nudge is one).
+	// That keeps it next to what the model is working on, in a long run too. Never after a tool result:
+	// a trailing "before ending your reply, call set_next" there makes the model call set_next again and again.
+	// It is not stored in the session. It only changes when the anchor changes, so most calls keep the prompt cache
 	pi.on("context", async (event) => {
 		const message = { role: "custom" as const, customType: "anchor", content: reminder(state, pending), display: false, timestamp: Date.now() };
 		const messages = [...event.messages];
-		const lastUser = messages.map((m) => (m as { role?: string }).role).lastIndexOf("user");
-		messages.splice(lastUser >= 0 ? lastUser : 0, 0, message as (typeof messages)[number]);
+		const roles = messages.map((m) => (m as { role?: string }).role);
+		const at = Math.max(roles.lastIndexOf("user"), roles.lastIndexOf("custom"));
+		messages.splice(at + 1, 0, message as (typeof messages)[number]);
 		return { messages };
 	});
 
 	// A message you type that decides or rejects something is flagged until the AI records it
 	pi.on("input", async (event) => {
-		if (event.source === "extension") return { action: "continue" as const };
-		const kind = decisionKind(event.text);
-		pending = kind ? { kind, text: event.text.trim() } : undefined;
+		// A message from an extension (such as the /goal kickoff) is a new instruction too: an older unrecorded decision is no longer "latest"
+		const kinds = event.source === "extension" ? [] : decisionKinds(event.text);
+		pending = kinds.length > 0 ? { kinds, text: event.text.trim() } : undefined;
 		return { action: "continue" as const };
 	});
 
-	pi.on("session_start", async (_event, ctx) => {
+	// Restore the last state saved on the current branch
+	const restore = (ctx: ExtensionContext) => {
 		current = ctx;
 		pending = undefined;
-		// Restore the last state saved on this branch
 		const last = ctx.sessionManager
 			.getBranch()
 			.filter((e) => e.type === "custom" && (e as { customType?: string }).customType === "anchor")
@@ -141,7 +149,10 @@ export default function (pi: ExtensionAPI) {
 		state = fresh(last?.data);
 		render(ctx);
 		pi.events.emit("anchor:changed", { ...state });
-	});
+	};
+	pi.on("session_start", async (_event, ctx) => restore(ctx));
+	// /tree moves to another branch: its own anchor applies, not the one in memory
+	pi.on("session_tree", async (_event, ctx) => restore(ctx));
 
 	// A goal set with /goal becomes the focus
 	pi.events.on("goal:start", (data) => {
