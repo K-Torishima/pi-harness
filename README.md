@@ -28,7 +28,7 @@ It is grown one piece at a time: only things that were actually missed while usi
 ### Safety
 
 - `extensions/guard/` — blocks only what the AI must never do. Rules live in `rules.json`
-  - Blocks `sudo`, `rm -rf`, reading `.env`, force pushes, and git commands that throw away work
+  - Blocks `sudo`, `rm -rf`, reading `.env` and credential files, commands that print secrets (`get-secret-value`, `gh auth token`, `printenv`, …), force pushes, and git commands that throw away work
   - Personal rules go in `rules.local.json` (gitignored) and are merged in
   - Commands you type yourself with `!` are never blocked. `/guard` lists the rules
 - `extensions/mandate/` — lets the AI act only on what you asked for, and stops it asking about what you already allowed
@@ -36,6 +36,15 @@ It is grown one piece at a time: only things that were actually missed while usi
   - In `look` and `plan`, edits and changing commands are blocked. Outward actions (`git push`, PR and issue writes, deploys, API writes) need a grant, which lasts for the session
   - In `do`, a reply that ends by asking permission to go on is sent back once to carry on. `/goal` switches to `do`
   - `/mode look|plan|do`, `/allow push|pr|issue|deploy|api`, `/revoke <grant>|all`, `/mandate`
+- `extensions/secrets/` — keeps secrets out of the AI's context and out of what leaves the machine
+  - Tokens, keys, and private keys in tool output are replaced with `[redacted <kind>]` before the AI sees them
+  - Before `git commit`, `git push`, and `gh pr create`, the added lines are scanned for secrets, `.env` and key files, paths under your home directory, and your git email. Extra private words go in `terms.local.json` (gitignored). `/secrets` shows what is checked
+
+### Review
+
+- `skills/simplify/` — makes a change smaller and plainer without changing what it does, then runs the tests. `/skill:simplify`
+- `skills/review/` — finds bugs, checks the change against what was intended, and collects review comments still open on its PR. `/skill:review [PR number]`
+- `extensions/reviewed/` — blocks `gh pr create` until simplify has run on the change and review has run after the last edit. `/reviewed` shows what is missing
 
 ### Working across sessions
 

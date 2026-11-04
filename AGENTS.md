@@ -9,6 +9,7 @@ A personal harness for pi (earendil-works/pi-coding-agent). It is loaded as a lo
 - `themes/*.json` are themes
 - `agent/` holds files that are linked into `~/.pi/agent/` with `make link` (currently `APPEND_SYSTEM.md`)
 - Only `extensions/voice/helper/main.swift` is built, with `make` (`bin/` is not committed)
+- Tests sit next to the code as `*.test.ts` and run with `make test`. `test/` holds shared test helpers (loading an extension through pi's own loader, fake secrets); build fake secrets at run time so no file looks like it holds a real one
 - Personal guard rules go in `extensions/guard/rules.local.json`, which is gitignored. Never commit personal paths, names, or secrets
 
 ## How this harness grows
