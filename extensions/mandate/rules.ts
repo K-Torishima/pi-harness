@@ -23,9 +23,17 @@ export function stripHeredocs(cmd: string): string {
 	return cmd.replace(/<<-?\s*(['"]?)(\w+)\1[^\n]*\n[\s\S]*?\n\s*\2\s*(?=\n|$)/g, "<<$2");
 }
 
+// One left-to-right pass, so an apostrophe inside "it's" does not open a fake single-quoted span
+const QUOTED = /'[^']*'|"(?:\\.|[^"\\])*"/g;
+
 /** Drop quoted strings, so `rg "rm -rf"` or `jq '.a > 1'` do not look like writes */
 export function stripQuoted(cmd: string): string {
-	return cmd.replace(/'[^']*'/g, "''").replace(/"(?:\\.|[^"\\])*"/g, '""');
+	return cmd.replace(QUOTED, (m) => (m[0] === "'" ? "''" : '""'));
+}
+
+/** Unwrap the script passed to `sh -c` / `bash -c` / `eval`, so the commands inside are checked too */
+export function unwrapShellC(cmd: string): string {
+	return cmd.replace(/\b((?:ba|z)?sh\s+-l?c|eval)\s+('[^']*'|"(?:\\.|[^"\\])*")/g, (_m, lead: string, q: string) => `${lead} ; ${q.slice(1, -1)}`);
 }
 
 /** Split a command line into simple commands at ; && || | newlines and $( */
@@ -36,11 +44,15 @@ function segments(cmd: string): string[] {
 		.filter(Boolean);
 }
 
-// The start of a simple command: env assignments and wrappers such as `time` or `xargs -0`
-const LEAD = String.raw`^(?:\w+=\S*\s+)*(?:(?:command|time|nohup|xargs(?:\s+-\S+)*)\s+)?`;
+// The start of a simple command: env assignments and wrappers such as `time` or `nohup`
+const LEAD = String.raw`^(?:\w+=\S*\s+)*(?:(?:command|time|nohup)\s+)?`;
+// git's global options before the subcommand: -C <dir>, -c <key=value>, --no-pager, --git-dir=...
+const GIT = String.raw`\bgit(?:\s+(?:-[Cc]\s+\S+|--?[\w-]+(?:=\S+)?))*\s+`;
+// Commands that change files
+const CHANGERS = "rm|rmdir|mv|cp|mkdir|touch|chmod|chown|ln|truncate|tee|dd|install|patch|unzip";
 
 const OUTWARD: { grant: Grant; label: string; re: RegExp }[] = [
-	{ grant: "push", label: "git push", re: /\bgit\b(?:\s+-[Cc]\s+\S+)*\s+push\b/ },
+	{ grant: "push", label: "git push", re: new RegExp(`${GIT}push\\b`) },
 	{ grant: "pr", label: "gh pr (write)", re: /\bgh\s+pr\s+(?:create|merge|close|reopen|edit|comment|review|ready)\b/ },
 	{ grant: "issue", label: "gh issue (write)", re: /\bgh\s+issue\s+(?:create|edit|comment|close|reopen|delete|transfer|lock|unlock|pin|unpin)\b/ },
 	{ grant: "deploy", label: "gh release / workflow", re: /\bgh\s+(?:release\s+(?:create|edit|delete|upload)|workflow\s+run|run\s+(?:rerun|cancel))\b/ },
@@ -52,12 +64,14 @@ const OUTWARD: { grant: Grant; label: string; re: RegExp }[] = [
 ];
 
 const LOCAL: { label: string; re: RegExp }[] = [
-	{ label: "file change", re: new RegExp(`${LEAD}(?:rm|rmdir|mv|cp|mkdir|touch|chmod|chown|ln|truncate|tee|dd|install|patch|unzip|tar\\s+-?x)\\b`) },
+	{ label: "file change", re: new RegExp(`${LEAD}(?:${CHANGERS}|tar\\s+-?x)\\b`) },
+	{ label: "file change via xargs", re: new RegExp(`^(?:\\w+=\\S*\\s+)*xargs\\b.*?\\s(?:${CHANGERS})\\b`) },
+	{ label: "find -delete / -exec", re: new RegExp(`^find\\b.*\\s(?:-delete\\b|-exec(?:dir)?\\s+(?:${CHANGERS})\\b)`) },
 	{ label: "in-place edit", re: new RegExp(`${LEAD}(?:g?sed|perl)\\b.*\\s-[a-zA-Z]*i`) },
 	{
 		label: "git (write)",
 		re: new RegExp(
-			`${LEAD}git(?:\\s+-[Cc]\\s+\\S+)*\\s+(?:add|commit|merge|rebase|reset|checkout|switch|apply|am|cherry-pick|revert|pull|clean|restore|rm|mv|init|clone|stash(?:\\s+(?:push|pop|apply|drop|clear|save)|\\s*$)|tag\\s+(?!-l\\b|--list\\b)\\S|branch\\s+-[dDmMcC]|worktree\\s+(?:add|remove|move|prune))\\b`,
+			`${LEAD}${GIT}(?:add|commit|merge|rebase|reset|checkout|switch|apply|am|cherry-pick|revert|pull|clean|restore|rm|mv|init|clone|stash(?:\\s+(?:push|pop|apply|drop|clear|save)|\\s*$)|tag\\s+(?!-l\\b|--list\\b)\\S|branch\\s+-[dDmMcC]|worktree\\s+(?:add|remove|move|prune))\\b`,
 		),
 	},
 	{ label: "package install", re: new RegExp(`${LEAD}(?:(?:npm|pnpm|yarn|bun)\\s+(?:i|install|add|remove|rm|uninstall|update|upgrade|link|ci)|pip3?\\s+install|brew\\s+(?:install|uninstall|upgrade|remove|reinstall))\\b`) },
@@ -71,10 +85,15 @@ function apiWrite(raw: string): string | undefined {
 				if (/\bmutation\b/.test(seg)) return "gh api graphql mutation";
 				continue;
 			}
-			if (/(?:-X|--method)\s*=?\s*(?:POST|PUT|PATCH|DELETE)\b/i.test(seg) || /\s(?:-f|-F|--field|--raw-field|--input)\b/.test(seg)) return "gh api (write)";
+			// An explicit method decides; without one, fields (-f / -F) make gh send a POST
+			const method = seg.match(/(?:-X|--method)\s*=?\s*['"]?([A-Za-z]+)/)?.[1]?.toUpperCase();
+			if (method ? /^(?:POST|PUT|PATCH|DELETE)$/.test(method) : /\s(?:-f|-F|--field|--raw-field|--input)\b/.test(seg)) return "gh api (write)";
 		}
 		if (/^(?:\w+=\S*\s+)*curl\b/.test(seg)) {
-			if (/(?:-X|--request)\s*=?\s*['"]?(?:POST|PUT|PATCH|DELETE)\b/i.test(seg) || /\s(?:-d|--data\S*|-F|--form|-T|--upload-file|--json)\b/.test(seg)) return "curl (write)";
+			const method = /(?:-X|--request)\s*=?\s*['"]?(?:POST|PUT|PATCH|DELETE)\b/i.test(seg);
+			// -d / -F / -T alone or bundled with other short flags, such as -sd
+			const body = /\s(?:--data\S*|--form|--upload-file|--json)\b/.test(seg) || /\s-[a-zA-Z]*[dFT][a-zA-Z]*(?=\s|$)/.test(seg);
+			if (method || body) return "curl (write)";
 		}
 	}
 	return undefined;
@@ -91,13 +110,14 @@ function redirects(unquoted: string): boolean {
 
 /** What a bash command does: read only, change local files, or reach outside */
 export function classifyCommand(command: string): Effect {
-	const raw = stripHeredocs(command);
-	// Outward checks keep quoted text, so `sh -c 'git push'` is still caught (fail closed)
-	for (const { grant, label, re } of OUTWARD) if (re.test(raw)) return { kind: "outward", grant, label };
+	const raw = unwrapShellC(stripHeredocs(command));
+	// Quoted text is dropped, so a commit message that mentions `git push` is not a push.
+	// apiWrite reads quotes, because a GraphQL mutation lives inside one; it only looks at segments that start with gh api / curl
+	const unquoted = stripQuoted(raw);
+	for (const { grant, label, re } of OUTWARD) if (re.test(unquoted)) return { kind: "outward", grant, label };
 	const api = apiWrite(raw);
 	if (api) return { kind: "outward", grant: "api", label: api };
 
-	const unquoted = stripQuoted(raw);
 	for (const seg of segments(unquoted)) {
 		for (const { label, re } of LOCAL) if (re.test(seg)) return { kind: "local", label };
 	}
@@ -120,10 +140,18 @@ export function normalize(text: string): string {
 		.replace(/[\s\p{P}\p{S}]/gu, "");
 }
 
-/** Is the quote really part of what the user said? */
+// A quote must be at least this long (after normalize), or the whole message when the message is shorter
+const MIN_QUOTE = 4;
+
+/**
+ * Is the quote really part of what the user said?
+ * This stops made-up quotes and one-character quotes such as "を". It cannot stop a real phrase
+ * from being misread; the status bar shows the quote so the user can see what it was based on.
+ */
 export function quoteMatches(quote: string, userText: string): boolean {
 	const q = normalize(quote);
-	return q.length > 0 && normalize(userText).includes(q);
+	const u = normalize(userText);
+	return q.length >= Math.min(MIN_QUOTE, u.length) && q.length > 0 && u.includes(q);
 }
 
 const ASKS = [

@@ -44,9 +44,9 @@ type TextPart = { type?: string; text?: string };
 const textOf = (content: unknown): string =>
 	typeof content === "string" ? content : Array.isArray(content) ? (content as TextPart[]).map((p) => (p?.type === "text" ? (p.text ?? "") : "")).join("\n") : "";
 
-/** The text of the user's latest message in this session */
+/** The text of the user's latest message on the current branch (not on branches left with /tree) */
 function latestUserText(ctx: ExtensionContext): string {
-	const entries = ctx.sessionManager.getEntries() as { type: string; message?: { role?: string; content?: unknown } }[];
+	const entries = ctx.sessionManager.getBranch() as { type: string; message?: { role?: string; content?: unknown } }[];
 	for (let i = entries.length - 1; i >= 0; i--) {
 		const m = entries[i].message;
 		if (entries[i].type === "message" && m?.role === "user") return textOf(m.content);
@@ -56,16 +56,28 @@ function latestUserText(ctx: ExtensionContext): string {
 
 export default function (pi: ExtensionAPI) {
 	let state: State = { mode: "look", quote: "", grants: [] };
-	// Per user request: whether mandate blocked something, and whether we already sent a reply back
+	// Per user request: whether mandate blocked something since the mode was last raised, and whether we already sent a reply back
 	let blocked = false;
 	let nudged = false;
+	// A follow-up typed while the agent runs is a new request; reset when its run starts, not while the current one is still working
+	let resetOnNextRun = false;
+	let current: ExtensionContext | undefined;
 
-	const render = (ctx: ExtensionContext) => {
-		if (!ctx.hasUI) return;
+	const render = (ctx: ExtensionContext | undefined) => {
+		if (!ctx?.hasUI) return;
 		const t = ctx.ui.theme;
 		const color = state.mode === "do" ? "success" : state.mode === "plan" ? "accent" : "muted";
+		const quote = state.quote ? t.fg("muted", ` 「${state.quote.length > 24 ? `${state.quote.slice(0, 24)}…` : state.quote}」`) : "";
 		const grants = state.grants.length > 0 ? t.fg("muted", ` +${state.grants.join(",")}`) : "";
-		ctx.ui.setStatus("mandate", `${t.fg(color, state.mode)}${grants}`);
+		ctx.ui.setStatus("mandate", `${t.fg(color, state.mode)}${quote}${grants}`);
+	};
+
+	const startRequest = (ctx: ExtensionContext | undefined) => {
+		blocked = false;
+		nudged = false;
+		state.mode = "look";
+		state.quote = "";
+		render(ctx);
 	};
 
 	const save = (ctx: ExtensionContext) => {
@@ -73,7 +85,7 @@ export default function (pi: ExtensionAPI) {
 		render(ctx);
 	};
 
-	const setMode = (ctx: ExtensionContext, mode: Mode, quote: string) => {
+	const setMode = (ctx: ExtensionContext | undefined, mode: Mode, quote: string) => {
 		state.mode = mode;
 		state.quote = quote;
 		render(ctx);
@@ -104,6 +116,8 @@ export default function (pi: ExtensionAPI) {
 						`Rejected: the quote is not in the user's latest message. Quote their exact words that ask for this. If they did not ask for it, stay in ${state.mode} and ask them in one sentence.`,
 					);
 				setMode(ctx, mode, mode === "look" ? "" : quote);
+				// Blocks from before the user's go-ahead no longer explain a question at the end
+				if (mode === "do") blocked = false;
 				return reply(`Mode is now ${mode} (${MODE_MEANING[mode]}).${mode === "do" ? " Do not ask for permission inside this request; carry on and report." : ""}`);
 			}
 
@@ -128,13 +142,18 @@ export default function (pi: ExtensionAPI) {
 		return { message: { customType: "mandate", content: lines.join("\n"), display: false } };
 	});
 
-	// A new message you type starts a new request, in look
+	// A new message you type starts a new request, in look. Steering mid-run stays part of the current request
 	pi.on("input", async (event, ctx) => {
-		if (event.source === "extension" || event.streamingBehavior) return { action: "continue" as const };
-		blocked = false;
-		nudged = false;
-		setMode(ctx, "look", "");
+		if (event.source === "extension" || event.streamingBehavior === "steer") return { action: "continue" as const };
+		if (event.streamingBehavior === "followUp") resetOnNextRun = true;
+		else startRequest(ctx);
 		return { action: "continue" as const };
+	});
+
+	pi.on("agent_start", async (_event, ctx) => {
+		if (!resetOnNextRun) return;
+		resetOnNextRun = false;
+		startRequest(ctx);
 	});
 
 	pi.on("tool_call", async (event, ctx) => {
@@ -176,23 +195,22 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
+		current = ctx;
+		// Grants come from the current branch only, so a grant or /revoke on another branch does not leak in
 		const last = ctx.sessionManager
-			.getEntries()
+			.getBranch()
 			.filter((e) => e.type === "custom" && (e as { customType?: string }).customType === "mandate")
 			.at(-1) as { data?: { grants?: Grant[] } } | undefined;
 		state = { mode: "look", quote: "", grants: GRANTS.filter((g) => last?.data?.grants?.includes(g)) };
-		blocked = false;
-		nudged = false;
-		render(ctx);
+		resetOnNextRun = false;
+		startRequest(ctx);
 	});
 
 	// A goal set with /goal is a request to do it
 	pi.events.on("goal:start", (data) => {
 		const objective = (data as { objective?: string }).objective ?? "";
-		state.mode = "do";
-		state.quote = objective;
-		blocked = false;
-		nudged = false;
+		startRequest(current);
+		setMode(current, "do", objective);
 	});
 
 	pi.registerCommand("mode", {

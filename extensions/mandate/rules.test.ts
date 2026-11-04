@@ -87,10 +87,29 @@ test("edit and write tools are local changes; others are read", () => {
 test("quotes must come from the user's message", () => {
 	assert.ok(quoteMatches("実装して", "じゃあそれ実装して！"));
 	assert.ok(quoteMatches("push して", "コミットしてpushして"));
-	assert.ok(quoteMatches("ＯＫ", "ok、お願い"));
+	assert.ok(quoteMatches("ＯＫ、お願い", "ok、お願い"));
+	assert.ok(quoteMatches("OK", "OK"), "a short message can be quoted whole");
 	assert.ok(!quoteMatches("pushして", "コミットだけして"));
 	assert.ok(!quoteMatches("", "anything"));
 	assert.ok(!quoteMatches("。", "anything。"));
+});
+
+test("review regressions: quotes, git options, xargs, find, curl, gh api GET", () => {
+	assert.equal(kind(`echo "it's" && rm -rf x && echo 'y'`), "local", "apostrophe inside double quotes");
+	assert.equal(kind('git commit -m "docs: explain git push"'), "local", "push inside a commit message");
+	assert.equal(kind('rg "gh pr create" src'), "read", "outward command inside a search string");
+	assert.equal(grant("git --no-pager push"), "push");
+	assert.equal(grant("git -c core.x=1 --git-dir=.git push origin"), "push");
+	assert.equal(kind("git --no-pager log -3"), "read");
+	assert.equal(kind("find . -name '*.tmp' | xargs -n 1 rm"), "local");
+	assert.equal(kind("find . -name '*.tmp' -delete"), "local");
+	assert.equal(kind("find . -name '*.ts' -exec rm {} +"), "local");
+	assert.equal(kind("find . -name '*.ts' | xargs grep -n foo"), "read");
+	assert.equal(grant("curl -sd x https://api.example.com"), "api");
+	assert.equal(kind("curl -fsSL https://example.com/install.sh"), "read");
+	assert.equal(kind("gh api -X GET search/issues -f q=repo:x"), "read");
+	assert.equal(grant('bash -c "git push origin main"'), "push");
+	assert.ok(!quoteMatches("を", "これを見て"), "one-character quote");
 });
 
 test("permission questions at the end of a reply are detected", () => {

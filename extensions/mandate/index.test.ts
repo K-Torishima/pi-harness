@@ -28,12 +28,15 @@ async function setup() {
 	const ext = result.extensions[0];
 
 	const entries: Entry[] = [];
+	// Entries that live only on another branch (left with /tree): in getEntries, but not in getBranch
+	const otherBranch: Entry[] = [];
 	const notes: string[] = [];
+	const status: string[] = [];
 	const ctx = {
-		hasUI: false,
+		hasUI: true,
 		cwd: HERE,
-		sessionManager: { getEntries: () => entries },
-		ui: { notify: (m: string) => notes.push(m), setStatus: () => {}, theme: { fg: (_c: string, s: string) => s } },
+		sessionManager: { getEntries: () => [...entries, ...otherBranch], getBranch: () => entries },
+		ui: { notify: (m: string) => notes.push(m), setStatus: (_k: string, s: string) => status.push(s), theme: { fg: (_c: string, s: string) => s } },
 	};
 	const fire = async (name: string, event: Record<string, unknown> = {}) => {
 		let last: unknown;
@@ -51,7 +54,7 @@ async function setup() {
 	};
 	const bash = (command: string) => fire("tool_call", { toolName: "bash", toolCallId: "t", input: { command } });
 	await fire("session_start", { reason: "startup" });
-	return { fire, callTool, userSays, bash, bus, appended, notes, ext };
+	return { fire, callTool, userSays, bash, bus, appended, notes, status, entries, otherBranch, ext };
 }
 
 test("a question starts in look and edits are blocked", async () => {
@@ -100,17 +103,50 @@ test("outward actions need a grant even in do, and grants last for the session",
 	assert.deepEqual(m.appended.at(-1), { customType: "mandate", data: { grants: ["push"] } });
 
 	await m.userSays("次はPRの説明見せて");
-	await m.callTool({ action: "set_mode", mode: "do", quote: "見せて" });
+	await m.callTool({ action: "set_mode", mode: "do", quote: "PRの説明見せて" });
 	assert.equal(await m.bash("git push"), undefined, "push grant still holds");
 	assert.equal((await m.bash("gh pr create --fill"))?.block, true, "pr was never granted");
 });
 
-test("/goal switches to do", async () => {
+test("/goal switches to do and shows it", async () => {
 	const m = await setup();
 	await m.userSays("/goal テストを足す");
 	m.bus.emit("goal:start", { objective: "テストを足す" });
 	await m.fire("input", { text: "Goal: テストを足す", source: "extension" });
 	assert.equal(await m.bash("touch a.test.ts"), undefined);
+	assert.match(m.status.at(-1) ?? "", /^do 「テストを足す」/);
+});
+
+test("a follow-up queued mid-run resets to look when its run starts, not before", async () => {
+	const m = await setup();
+	await m.userSays("実装して");
+	await m.callTool({ action: "set_mode", mode: "do", quote: "実装して" });
+	await m.fire("input", { text: "この関数は何をしてる？", source: "interactive", streamingBehavior: "followUp" });
+	assert.equal(await m.bash("touch x"), undefined, "the current run keeps working");
+	await m.fire("agent_start");
+	assert.equal((await m.bash("touch x"))?.block, true, "the follow-up starts in look");
+});
+
+test("only the current branch counts for quotes and restored grants", async () => {
+	const m = await setup();
+	m.otherBranch.push({ type: "message", message: { role: "user", content: "pushして" } });
+	await m.userSays("この差分どう思う？");
+	assert.match(await m.callTool({ action: "grant", grant: "push", quote: "pushして" }), /Rejected/);
+
+	m.otherBranch.push({ type: "custom", customType: "mandate", data: { grants: ["push"] } } as Entry);
+	await m.fire("session_start", { reason: "resume" });
+	await m.userSays("直して");
+	await m.callTool({ action: "set_mode", mode: "do", quote: "直して" });
+	assert.equal((await m.bash("git push"))?.block, true, "a grant from another branch does not leak in");
+});
+
+test("a block before the go-ahead does not turn off the send-back", async () => {
+	const m = await setup();
+	await m.userSays("これ直しておいて");
+	assert.equal((await m.fire("tool_call", { toolName: "edit", input: { path: "a.ts" } }))?.block, true);
+	await m.callTool({ action: "set_mode", mode: "do", quote: "直しておいて" });
+	const r = await m.fire("agent_before_settle", settle("直しました。次も進めましょうか？"));
+	assert.equal(r?.continue, true);
 });
 
 const settle = (text: string, extra: Record<string, unknown> = {}) => ({
