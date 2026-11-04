@@ -22,7 +22,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { textOf } from "../lib/request.ts";
-import { asksPermission, classifyTool, GRANTS, type Grant, MODES, type Mode, quoteMatches } from "./rules.ts";
+import { asksPermission, blamesMode, classifyTool, GRANTS, type Grant, MODES, type Mode, quoteMatches } from "./rules.ts";
 
 type State = { mode: Mode; quote: string; grants: Grant[] };
 
@@ -129,7 +129,9 @@ export default function (pi: ExtensionAPI) {
 	// Before every request, tell the AI what it is allowed to do
 	pi.on("before_agent_start", async () => {
 		const lines = [
-			`[mandate] Mode for this request: ${state.mode} (${MODE_MEANING[state.mode]})${state.quote ? ` — from the user's words "${state.quote}"` : ""}.`,
+			state.mode === "look" && !state.quote
+				? "[mandate] This request starts in look mode. That is the default for every new message, not something the user asked for: raise it yourself when their message asks for a change."
+				: `[mandate] Mode for this request: ${state.mode} (${MODE_MEANING[state.mode]})${state.quote ? ` — from the user's words "${state.quote}"` : ""}.`,
 			`Outward actions allowed this session: ${state.grants.length > 0 ? state.grants.join(", ") : "none"}.`,
 			"- If the user's latest message asks you to change, build, fix, or run something, call mandate set_mode do with their exact words as quote, then do it. Do not ask for permission first.",
 			"- If it only asks a question, or asks you to look, check, or explain, stay in look and answer. Do not start changing things.",
@@ -170,23 +172,24 @@ export default function (pi: ExtensionAPI) {
 		return { block: true, reason: `Blocked by mandate: ${reason}` };
 	});
 
-	// In do, send a reply that ends by asking permission back once
+	// Send a reply back once when it stops short:
+	// - in do, it ends by asking permission for something inside the request
+	// - in look or plan, it says the mode held it back, without ever trying to raise the mode
 	pi.on("agent_before_settle", async (event) => {
-		if (state.mode !== "do" || nudged || blocked) return undefined;
+		if (nudged || blocked) return undefined;
 		if (event.outcome === "aborted" || event.outcome === "error" || event.continue) return undefined;
 		const last = [...event.context.contextMessages].reverse().find((m) => (m as { role?: string }).role === "assistant") as { content?: unknown } | undefined;
-		if (!last || !asksPermission(textOf(last.content))) return undefined;
+		const text = textOf(last?.content);
+		let content: string | undefined;
+		if (state.mode === "do" && asksPermission(text)) {
+			content = `[mandate] You are in do mode for this request ("${state.quote}"), but your reply ends by asking for permission. If what you are asking about is part of this request and needs no outward grant, do it now and report. If it truly needs the user (a choice between options, or an outward action not granted), end with that one question.`;
+		} else if (state.mode !== "do" && blamesMode(text)) {
+			content = `[mandate] Your reply says the ${state.mode} mode held you back, but the mode is yours to raise. Re-read the user's latest message: if it asks you to change, build, fix, or run something, call mandate set_mode do with their exact words now and do it. If it only asks a question or asks you to look, end with the answer and do not mention modes.`;
+		}
+		if (!content) return undefined;
 		nudged = true;
 		return {
-			entries: [
-				...event.entries,
-				{
-					type: "custom_message" as const,
-					customType: "mandate",
-					content: `[mandate] You are in do mode for this request ("${state.quote}"), but your reply ends by asking for permission. If what you are asking about is part of this request and needs no outward grant, do it now and report. If it truly needs the user (a choice between options, or an outward action not granted), end with that one question.`,
-					display: false,
-				},
-			],
+			entries: [...event.entries, { type: "custom_message" as const, customType: "mandate", content, display: false }],
 			continue: true,
 		};
 	});

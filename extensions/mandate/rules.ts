@@ -158,6 +158,15 @@ const ASKS = [
 	/\b(?:shall i|should i (?:go ahead|proceed|continue)|do you want me to|want me to|let me know if you(?:'d| would) like|ready (?:for me )?to proceed)\b/i,
 ];
 
+// A reply that says it held back because of the mode
+// "look" or "plan" alone is an ordinary word ("the plan is ..."), so it counts only as a mode name
+const MODE_STALL = /(?:\b(?:look|plan)\s*(?:mode|モード)|[（(](?:look|plan)[）)]|読み取り専用|閲覧のみ|変更(?:可能|できる)な?モード|\bread[- ]only\b)/i;
+
+/** Does the reply say it did not act because of the current mode? */
+export function blamesMode(reply: string): boolean {
+	return MODE_STALL.test(reply);
+}
+
 /** Does the end of a reply ask the user for permission to go on? */
 export function asksPermission(reply: string): boolean {
 	const tail = reply.slice(-300);

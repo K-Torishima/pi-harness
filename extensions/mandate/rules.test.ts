@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { asksPermission, classifyCommand, classifyTool, localChanges, quoteMatches } from "./rules.ts";
+import { asksPermission, blamesMode, classifyCommand, classifyTool, localChanges, quoteMatches } from "./rules.ts";
 
 test("localChanges lists every changing part of a command, not just the first", () => {
 	assert.deepEqual(
@@ -131,4 +131,12 @@ test("permission questions at the end of a reply are detected", () => {
 	assert.ok(asksPermission("よければ「進めて」と送ってください。"));
 	assert.ok(!asksPermission("修正してテストも通りました。"));
 	assert.ok(!asksPermission("A と B のどちらにしますか？"));
+});
+
+test("blamesMode spots a reply that held back because of the mode", () => {
+	assert.ok(blamesMode("現在は読み取り専用（look）なので、変更していません。"));
+	assert.ok(blamesMode("変更可能なモードになったら直します。"));
+	assert.ok(blamesMode("I'm in look mode, so I did not change anything."));
+	assert.ok(!blamesMode("末尾に改行を足しました。"));
+	assert.ok(!blamesMode("The plan is to look at the logs first."), "plan and look as ordinary words");
 });

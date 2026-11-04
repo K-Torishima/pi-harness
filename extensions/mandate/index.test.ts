@@ -132,6 +132,15 @@ test("in do, a reply asking permission is sent back once", async () => {
 	assert.equal(second, undefined, "only once per request");
 });
 
+test("in look, a reply that blames the mode for not acting is sent back once", async () => {
+	const m = await setup();
+	await m.userSays("note.txt の末尾に改行を1つ足して");
+	const r = await m.fire("agent_before_settle", settle("現在は読み取り専用（look）なので、変更していません。"));
+	assert.equal(r?.continue, true);
+	assert.match(String((r?.entries as { content?: string }[])[0].content), /set_mode do with their exact words/);
+	assert.equal(await m.fire("agent_before_settle", settle("現在は look なので変更していません。")), undefined, "only once");
+});
+
 test("no send-back in look, after a block, or when another extension already continues", async () => {
 	const look = await setup();
 	await look.userSays("説明して");
@@ -157,4 +166,13 @@ test("/allow and /revoke manage grants", async () => {
 	assert.match(m.notes.at(-1) ?? "", /Allowed now: issue/);
 	await m.command("allow", "everything");
 	assert.match(m.notes.at(-1) ?? "", /Use \/allow/);
+});
+
+test("the default look is described as a default, not as the user's instruction", async () => {
+	const m = await setup();
+	await m.userSays("note.txt に改行を足して");
+	const r = await m.fire("before_agent_start", { messageType: "user", prompt: "note.txt に改行を足して" });
+	const text = String((r?.message as { content?: string })?.content);
+	assert.match(text, /default for every new message, not something the user asked for/);
+	assert.doesNotMatch(text, /change nothing/);
 });
