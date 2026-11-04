@@ -116,7 +116,6 @@ export default function (pi: ExtensionAPI) {
 			finish(ctx, "stopped", "Stopped on an error, so the goal was dropped too.", "warning");
 			return undefined;
 		}
-		if (!event.context.canContinue) return undefined;
 		if (goal.round >= MAX_ROUNDS) {
 			finish(ctx, "stopped", `Asked it to continue ${MAX_ROUNDS} times without finishing, so it stopped.`, "warning");
 			return undefined;

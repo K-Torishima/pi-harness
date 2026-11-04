@@ -176,7 +176,7 @@ export default function (pi: ExtensionAPI) {
 	// In do, send a reply that ends by asking permission back once
 	pi.on("agent_before_settle", async (event) => {
 		if (state.mode !== "do" || nudged || blocked) return undefined;
-		if (event.outcome === "aborted" || event.outcome === "error" || event.continue || !event.context.canContinue) return undefined;
+		if (event.outcome === "aborted" || event.outcome === "error" || event.continue) return undefined;
 		const last = [...event.context.contextMessages].reverse().find((m) => (m as { role?: string }).role === "assistant") as { content?: unknown } | undefined;
 		if (!last || !asksPermission(textOf(last.content))) return undefined;
 		nudged = true;

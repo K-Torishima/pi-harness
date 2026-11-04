@@ -21,6 +21,10 @@ export async function loadExtension(path: string, cwd: string) {
 	const runtime = loader.createExtensionRuntime();
 	const appended: { customType: string; data: unknown }[] = [];
 	runtime.appendEntry = (customType: string, data: unknown) => appended.push({ customType, data });
+	// Messages the extension hands to pi (such as a /goal kickoff)
+	const sent: unknown[] = [];
+	runtime.sendUserMessage = (content: unknown) => sent.push(content);
+	runtime.sendMessage = (message: unknown) => sent.push(message);
 	const result = await loader.loadExtensions([path], cwd, bus, runtime);
 	assert.deepEqual(result.errors, []);
 	const ext = result.extensions[0];
@@ -33,6 +37,7 @@ export async function loadExtension(path: string, cwd: string) {
 	const ctx = {
 		hasUI: true,
 		cwd,
+		isIdle: () => true,
 		sessionManager: { getEntries: () => [...entries, ...otherBranch], getBranch: () => entries },
 		ui: {
 			notify: (m: string) => notes.push(m),
@@ -53,5 +58,5 @@ export async function loadExtension(path: string, cwd: string) {
 	const command = (name: string, args: string) => ext.commands.get(name).handler(args, ctx);
 
 	await fire("session_start", { reason: "startup" });
-	return { ext, ctx, bus, fire, bash, command, appended, entries, otherBranch, notes, status };
+	return { ext, ctx, bus, fire, bash, command, appended, sent, entries, otherBranch, notes, status };
 }
