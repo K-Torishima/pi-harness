@@ -3,7 +3,7 @@ HELPER_SRC := extensions/voice/helper/main.swift
 HELPER_BIN := extensions/voice/bin/pi-voice-helper
 AGENT_DIR ?= $(HOME)/.pi/agent
 
-.PHONY: all link clean
+.PHONY: all link test clean
 
 all: $(HELPER_BIN)
 
@@ -15,6 +15,10 @@ $(HELPER_BIN): $(HELPER_SRC)
 link:
 	mkdir -p $(AGENT_DIR)
 	ln -sf $(CURDIR)/agent/APPEND_SYSTEM.md $(AGENT_DIR)/APPEND_SYSTEM.md
+
+# Extension tests. Node strips the TypeScript types; index tests load extensions through pi's own loader
+test:
+	node --test 'extensions/**/*.test.ts'
 
 clean:
 	rm -rf $(dir $(HELPER_BIN))
