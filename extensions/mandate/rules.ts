@@ -158,6 +158,20 @@ const ASKS = [
 	/\b(?:shall i|should i (?:go ahead|proceed|continue)|do you want me to|want me to|let me know if you(?:'d| would) like|ready (?:for me )?to proceed)\b/i,
 ];
 
+// Naming the mode ("look" or "plan" alone are ordinary words, so only as mode names)
+const MODE_NAME = /\b(?:look|plan)\s*(?:mode|モード)|[（(](?:look|plan)[）)]|読み取り専用|閲覧のみ|変更(?:可能|できる)な?(?:モード|指示)|\bread[- ]only\b/i;
+// ... and saying it held back because of it
+const HELD_BACK = /変更(?:して|は|を)?(?:いません|しません|しませんでした|していない)|変更できません|触って(?:いません|いない)|(?:did not|didn't|won't|will not|can't|cannot) (?:change|edit|modify|touch)|no (?:changes|files) (?:were )?(?:made|changed)|になったら|を受けたら|があれば/i;
+
+/** Does the end of the reply say it did not act because of the mode? Both must be in the same sentence */
+export function blamesMode(reply: string): boolean {
+	return reply
+		.trim()
+		.slice(-300)
+		.split(/(?<=[。！!？?])|\n/)
+		.some((s) => MODE_NAME.test(s) && HELD_BACK.test(s));
+}
+
 /** Does the end of a reply ask the user for permission to go on? */
 export function asksPermission(reply: string): boolean {
 	const tail = reply.slice(-300);

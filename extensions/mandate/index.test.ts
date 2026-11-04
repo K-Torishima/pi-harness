@@ -132,9 +132,20 @@ test("in do, a reply asking permission is sent back once", async () => {
 	assert.equal(second, undefined, "only once per request");
 });
 
+test("in look, a reply that blames the mode for not acting is sent back once", async () => {
+	const m = await setup();
+	await m.userSays("note.txt の末尾に改行を1つ足して");
+	const r = await m.fire("agent_before_settle", settle("現在は読み取り専用（look）なので、変更していません。"));
+	assert.equal(r?.continue, true);
+	assert.match(String((r?.entries as { content?: string }[])[0].content), /set_mode do with their exact words/);
+	assert.equal(await m.fire("agent_before_settle", settle("現在は look なので変更していません。")), undefined, "only once");
+});
+
 test("no send-back in look, after a block, or when another extension already continues", async () => {
+	// A look the user chose with /mode is respected
 	const look = await setup();
 	await look.userSays("説明して");
+	await look.command("mode", "look");
 	assert.equal(await look.fire("agent_before_settle", settle("進めますか？")), undefined);
 
 	const afterBlock = await setup();
@@ -157,4 +168,43 @@ test("/allow and /revoke manage grants", async () => {
 	assert.match(m.notes.at(-1) ?? "", /Allowed now: issue/);
 	await m.command("allow", "everything");
 	assert.match(m.notes.at(-1) ?? "", /Use \/allow/);
+});
+
+test("the default look is described as a default, not as the user's instruction", async () => {
+	const m = await setup();
+	await m.userSays("note.txt に改行を足して");
+	const r = await m.fire("before_agent_start", { messageType: "user", prompt: "note.txt に改行を足して" });
+	const text = String((r?.message as { content?: string })?.content);
+	assert.match(text, /default for every new message, not something the user asked for/);
+	assert.doesNotMatch(text, /change nothing/);
+});
+
+test("in the default look, a reply that asks permission instead of raising the mode is sent back", async () => {
+	const m = await setup();
+	await m.userSays("note.txt の末尾に改行を足して");
+	assert.equal((await m.fire("agent_before_settle", settle("改行を足しましょうか？")))?.continue, true);
+});
+
+test("a plan the user asked for, or a reply that only explains read-only, is not sent back", async () => {
+	const plan = await setup();
+	await plan.userSays("ログインのバグを直す計画を立てて");
+	await plan.callTool({ action: "set_mode", mode: "plan", quote: "直す計画を立てて" });
+	assert.equal(await plan.fire("agent_before_settle", settle("計画です。(plan) No files were changed.")), undefined);
+
+	const explain = await setup();
+	await explain.userSays("なんで書き込みに失敗するの？");
+	assert.equal(await explain.fire("agent_before_settle", settle("ボリュームが read-only でマウントされているためです。")), undefined);
+
+	const long = await setup();
+	await long.userSays("このモジュールを説明して");
+	const reply = `まず、このモジュールは read-only のキャッシュを持ちます。${"説明が続きます。".repeat(60)}以上です。`;
+	assert.equal(await long.fire("agent_before_settle", settle(reply)), undefined, "an early mention is not a stall");
+});
+
+test("block reasons no longer say 'change nothing'", async () => {
+	const m = await setup();
+	await m.userSays("見て");
+	const r = await m.fire("tool_call", { toolName: "edit", input: { path: "a.ts" } });
+	assert.doesNotMatch(String(r?.reason), /change nothing/);
+	assert.match(String(r?.reason), /edits are blocked until the mode is raised/);
 });
