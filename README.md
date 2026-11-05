@@ -59,6 +59,12 @@ It is grown one piece at a time: only things that were actually missed while usi
   - `/sessions` lists sessions with each one's current focus; `/send <name> <message>` sends a letter. Name a session with pi's `/name <name>`
   - A letter from a human makes the receiving AI act right away; a letter from an AI is only attached to the receiver's next request
 
+### Looking back
+
+- `tools/friction/` — a daily report of where pi sessions went wrong between you and the AI: pushback ("違う", "言ったよね"), requests asked again, "コミットした？" style status checks, runs stopped with Esc, the same block hit more than once, and replies the harness sent back. Each moment comes with the AI's words just before it
+  - `make schedule-friction` runs it every morning at 9:00 with launchd; `make friction` runs it now; `make unschedule-friction` stops it
+  - Reports go to `~/.pi/agent/friction/` and are never committed, because they quote your sessions. Sessions started from a temporary directory are left out
+
 ### Usage and voice
 
 - `extensions/limits/` — shows how much of the current provider's subscription quota is left, in the footer (e.g. `5h 88% left · wk 66% left`)
@@ -75,7 +81,8 @@ It is grown one piece at a time: only things that were actually missed while usi
 ```bash
 make        # build the voice input helper (macOS 26 or later, Apple Silicon)
 make link   # link agent/APPEND_SYSTEM.md into ~/.pi/agent/
-make test   # run extension tests (needs pi installed)
+make test   # run extension and tool tests (needs pi installed)
+make schedule-friction  # optional: the daily friction report
 pi install /path/to/pi-harness
 ```
 
