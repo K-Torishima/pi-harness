@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { asksPermission, blamesMode, classifyCommand, classifyTool, localChanges, quoteMatches } from "./rules.ts";
+import { asksOutward, asksPermission, blamesMode, classifyCommand, classifyTool, localChanges, quoteMatches } from "./rules.ts";
 
 test("localChanges lists every changing part of a command, not just the first", () => {
 	assert.deepEqual(
@@ -140,4 +140,18 @@ test("blamesMode spots a reply that held back because of the mode", () => {
 	assert.ok(!blamesMode("ボリュームが read-only でマウントされているためです。"), "explaining read-only is not a stall");
 	assert.ok(!blamesMode("末尾に改行を足しました。"));
 	assert.ok(!blamesMode("The plan is to look at the logs first."), "plan and look as ordinary words");
+});
+
+test("git plumbing that only reads is read; git tag <name> is a change", () => {
+	for (const c of ["git merge-base HEAD main", "git merge-tree --write-tree HEAD main", "git tag -l", "git tag --list 'v*'"]) assert.equal(classifyCommand(c).kind, "read", c);
+	for (const c of ["git merge main", "git merge-file a b c", "git tag v1.0", "git stash", "git branch -D x"]) assert.equal(classifyCommand(c).kind, "local", c);
+});
+
+test("asksOutward spots a closing question about an outward action", () => {
+	// From a real session: closing issues is the user's call, so look mode must not send this back
+	assert.ok(asksOutward("ログイン関連はまだ閉じていません。\nパスワード保存・自動再ログインは実装完了として閉じ、残る検証を親イシューで管理してよいですか？"));
+	assert.ok(asksOutward("pushしていい？"));
+	assert.ok(asksOutward("Shall I open the PR and merge it?"));
+	assert.ok(!asksOutward("修正しました。次にテストを追加してよいですか？"));
+	assert.ok(!asksOutward("本番の設定を読みました。次にテストを追加してよいですか？"), "only the question counts");
 });

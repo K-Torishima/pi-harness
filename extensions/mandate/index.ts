@@ -12,7 +12,7 @@
  *   Grants last for the session, so you are not asked again
  * - In look / plan, edits, writes, and changing commands are blocked. Outward actions without a grant are blocked in every mode
  * - A reply that stops short is sent back once: in do, one that ends by asking permission to go on;
- *   in the default look, one that asks permission or blames the mode instead of raising it
+ *   in the default look, one that asks permission (other than before an outward action) or blames the mode instead of raising it
  * - /goal switches to do, quoting the goal
  *
  * You use /mode [look|plan|do], /allow <grant...>, /revoke [grant|all], and /mandate (show).
@@ -23,7 +23,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { textOf } from "../lib/request.ts";
-import { asksPermission, blamesMode, classifyTool, GRANTS, type Grant, MODES, type Mode, quoteMatches } from "./rules.ts";
+import { asksOutward, asksPermission, blamesMode, classifyTool, GRANTS, type Grant, MODES, type Mode, quoteMatches } from "./rules.ts";
 
 type State = { mode: Mode; quote: string; grants: Grant[] };
 
@@ -178,7 +178,8 @@ export default function (pi: ExtensionAPI) {
 
 	// Send a reply back once when it stops short:
 	// - in do, it ends by asking permission for something inside the request
-	// - in the default look (not a look or plan the user chose), it ends by asking permission or by blaming the mode
+	// - in the default look (not a look or plan the user chose), it ends by asking permission or by blaming the mode.
+//   Asking before an outward action (closing an issue, pushing) is the user's call, so that question stays
 	pi.on("agent_before_settle", async (event) => {
 		if (nudged || blocked) return undefined;
 		if (event.outcome === "aborted" || event.outcome === "error" || event.continue) return undefined;
@@ -187,8 +188,8 @@ export default function (pi: ExtensionAPI) {
 		let content: string | undefined;
 		if (state.mode === "do" && asksPermission(text)) {
 			content = `[mandate] You are in do mode for this request ("${state.quote}"), but your reply ends by asking for permission. If what you are asking about is part of this request and needs no outward grant, do it now and report. If it truly needs the user (a choice between options, or an outward action not granted), end with that one question.`;
-		} else if (startedInLook() && (blamesMode(text) || asksPermission(text))) {
-			content = `[mandate] Your reply stops short in look mode, but look is only the default, and the mode is yours to raise. Re-read the user's latest message: if it asks you to change, build, fix, or run something, call mandate set_mode do with their exact words now and do it. If it only asks a question or asks you to look, end with the answer and do not mention modes.`;
+		} else if (startedInLook() && (blamesMode(text) || (asksPermission(text) && !asksOutward(text)))) {
+			content = `[mandate] Your reply stops short in look mode, but look is only the default, and the mode is yours to raise. Re-read the user's latest message: if it asks you to change, build, fix, or run something, call mandate set_mode do with their exact words now and do it. If it only asks a question or asks you to look, end with the answer and do not mention modes; keep one closing question only when the next step is an outward action the user has not allowed or a choice only they can make.`;
 		}
 		if (!content) return undefined;
 		nudged = true;

@@ -38,8 +38,9 @@ const PASSES =
 // Claims that something works or was checked. Running something, or looking at the result after the change, backs these up
 const WORKS = /動作確認(?:済|しました|できました|が取れ)|検証(?:済|しました|できました)|動(?:きました|くことを確認|いています)|問題なく動|\b(?:verified|works now|it works)\b/gi;
 
-// "通りませんでした", "通らない", "成功しなかった": the claim is denied right after it
-const DENIED_AFTER = /^\S{0,3}?(?:ませ|ない|なかっ|ず[、。]|ずに)/;
+// "通りませんでした", "通らない", "成功しなかった": the claim is denied right after it.
+// "テスト成功を意味しません", "通ることは確認していません": it is named only to say it is not shown
+const DENIED_AFTER = /^\S{0,3}?(?:ませ|ない|なかっ|ず[、。]|ずに)|^(?:る|った|した|する)?(?:こと|か|と)?[をはがも]?(?:意味|保証|確認|検証|限)\S{0,4}?(?:ませ|ない|なかっ)/;
 // "not verified", "haven't verified", "tests don't pass": the claim is denied right before it
 const DENIED_BEFORE = /\b(?:not|never|no|n't|un)\s*(?:yet\s+|been\s+|all\s+)?$/i;
 
@@ -47,7 +48,7 @@ const DENIED_BEFORE = /\b(?:not|never|no|n't|un)\s*(?:yet\s+|been\s+|all\s+)?$/i
 function affirmed(text: string, re: RegExp): string | undefined {
 	for (const m of text.matchAll(re)) {
 		const at = m.index ?? 0;
-		const after = text.slice(at + m[0].length, at + m[0].length + 8);
+		const after = text.slice(at + m[0].length, at + m[0].length + 14);
 		const before = text.slice(Math.max(0, at - 16), at);
 		if (!DENIED_AFTER.test(after) && !DENIED_BEFORE.test(before)) return m[0];
 	}
@@ -79,9 +80,18 @@ export function asksForFact(reply: string): boolean {
 	return sentences.some((s) => ASKS.test(s) && ASKS_FACT.test(s));
 }
 
-export type Ledger = { seq: number; lastLook: number; lastChange: number; lastVerify: number };
+/**
+ * Steps are numbered across the whole session: a check stays valid until the next change, even when a later request
+ * asks about it ("did the tests pass?"). requestStart is the last step before the current request
+ */
+export type Ledger = { seq: number; lastLook: number; lastChange: number; lastVerify: number; requestStart: number };
 
-export const emptyLedger = (): Ledger => ({ seq: 0, lastLook: 0, lastChange: 0, lastVerify: 0 });
+export const emptyLedger = (): Ledger => ({ seq: 0, lastLook: 0, lastChange: 0, lastVerify: 0, requestStart: 0 });
+
+/** A new request: earlier checks still count, but a fact question needs a lookup in this request */
+export function startRequest(ledger: Ledger): void {
+	ledger.requestStart = ledger.seq;
+}
 
 export function record(ledger: Ledger, step: Step): void {
 	ledger.seq += 1;
@@ -90,7 +100,7 @@ export function record(ledger: Ledger, step: Step): void {
 	else ledger.lastVerify = ledger.seq;
 }
 
-/** What is wrong with the reply given what was done during this request. Empty when it holds up */
+/** What is wrong with the reply given what was done so far. Empty when it holds up */
 export function checkClaims(reply: string, ledger: Ledger): string[] {
 	const problems: string[] = [];
 	const claim = claimsItWorks(reply);
@@ -102,11 +112,11 @@ export function checkClaims(reply: string, ledger: Ledger): string[] {
 			problems.push(
 				ledger.lastChange > 0
 					? `It says "${claim.text}", but nothing after the last change checks it. Run ${what} that shows it now and report what you saw. If you cannot, say plainly that it is not verified.`
-					: `It says "${claim.text}", but nothing during this request checks it. Run ${what} that shows it now and report what you saw, or say plainly that it is not verified.`,
+					: `It says "${claim.text}", but nothing in this session checks it. Run ${what} that shows it now and report what you saw, or say plainly that it is not verified.`,
 			);
 		}
 	}
-	if (asksForFact(reply) && ledger.lastLook === 0 && ledger.lastVerify === 0) {
+	if (asksForFact(reply) && Math.max(ledger.lastLook, ledger.lastVerify) <= ledger.requestStart) {
 		problems.push(
 			"It asks the user for a fact without having looked anything up. If the answer could be in the repo, its docs, git history, or the tools you have, look first and ask only what only the user can know.",
 		);

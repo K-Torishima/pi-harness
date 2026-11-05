@@ -44,8 +44,9 @@ const LOCAL: { label: string; re: RegExp }[] = [
 	{ label: "in-place edit", re: new RegExp(`${LEAD}(?:g?sed|perl)\\b.*\\s-[a-zA-Z]*i`) },
 	{
 		label: "git (write)",
+		// (?![\w-]) and not \b, so git merge-base and git merge-tree (read only) are not read as git merge
 		re: new RegExp(
-			`${LEAD}${GIT}(?:add|commit|merge|rebase|reset|checkout|switch|apply|am|cherry-pick|revert|pull|clean|restore|rm|mv|init|clone|stash(?:\\s+(?:push|pop|apply|drop|clear|save)|\\s*$)|tag\\s+(?!-l\\b|--list\\b)\\S|branch\\s+-[dDmMcC]|worktree\\s+(?:add|remove|move|prune))\\b`,
+			`${LEAD}${GIT}(?:(?:add|commit|merge-file|checkout-index|merge|rebase|reset|checkout|switch|apply|am|cherry-pick|revert|pull|clean|restore|rm|mv|init|clone)(?![\\w-])|stash(?:\\s+(?:push|pop|apply|drop|clear|save)|\\s*$)|tag\\s+(?!-l\\b|--list\\b)\\S|branch\\s+-[dDmMcC]|worktree\\s+(?:add|remove|move|prune)\\b)`,
 		),
 	},
 	{ label: "package install", re: new RegExp(`${LEAD}(?:(?:npm|pnpm|yarn|bun)\\s+(?:i|install|add|remove|rm|uninstall|update|upgrade|link|ci)|pip3?\\s+install|brew\\s+(?:install|uninstall|upgrade|remove|reinstall))\\b`) },
@@ -176,4 +177,19 @@ export function blamesMode(reply: string): boolean {
 export function asksPermission(reply: string): boolean {
 	const tail = reply.slice(-300);
 	return ASKS.some((re) => re.test(tail));
+}
+
+// Actions that reach outside, named in a question: closing an issue, pushing, merging, deploying, publishing
+const OUTWARD_WORDS =
+	/クローズ|閉じ|プッシュ|マージ|デプロイ|本番|リリース|公開|送信|投稿|コメントし|(?:PR|イシュー|issue)を?(?:作|立て|出)|\b(?:close|push|merge|deploy|release|publish|post|send)\b/i;
+
+/** Does the last question of the reply ask about an outward action? That is the user's call even in look mode */
+export function asksOutward(reply: string): boolean {
+	const question = reply
+		.trim()
+		.slice(-300)
+		.split(/(?<=[。！!？?])|\n/)
+		.filter((s) => /[？?]\s*$/.test(s.trim()) || ASKS.some((re) => re.test(s)))
+		.at(-1);
+	return question !== undefined && OUTWARD_WORDS.test(question);
 }

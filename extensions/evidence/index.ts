@@ -1,17 +1,17 @@
 /**
  * evidence: a reply may only claim what was actually checked, and may only ask what could not be looked up
  *
- * Within each request, this keeps a tally of what the AI did: looked something up, changed something, or verified
- * something (tests, builds, type checks, linters, running the thing). Before pi settles, the final reply is sent back once when:
+ * Over the session, this keeps a tally of what the AI did: looked something up, changed something, or verified
+ * something (tests, builds, type checks, linters, running the thing). Before pi settles, the final reply is sent back once per request when:
  * - it says tests pass or that something works, but nothing was run to check it after the last change
- * - it asks the user for a fact (where, which, the URL, the path) without having looked anything up first
+ * - it asks the user for a fact (where, which, the URL, the path) without having looked anything up in this request
  *
- * A new request (a message you type, a follow-up when its run starts, or a /goal kickoff) starts a new tally. /evidence shows it.
+ * A check stays valid until the next change, so answering "did the tests pass?" in a later request is fine. /evidence shows the tally.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { onRequestStart, textOf } from "../lib/request.ts";
-import { checkClaims, emptyLedger, type Ledger, record, stepsOf } from "./claims.ts";
+import { checkClaims, emptyLedger, type Ledger, record, startRequest as nextRequest, stepsOf } from "./claims.ts";
 
 type Msg = { role?: string; content?: unknown };
 
@@ -20,11 +20,14 @@ export default function (pi: ExtensionAPI) {
 	let sentBack = false;
 
 	const startRequest = () => {
-		ledger = emptyLedger();
+		nextRequest(ledger);
 		sentBack = false;
 	};
 
-	pi.on("session_start", async () => startRequest());
+	pi.on("session_start", async () => {
+		ledger = emptyLedger();
+		sentBack = false;
+	});
 	onRequestStart(pi, () => startRequest());
 	// Each /goal round ends in its own reply, so each one gets checked. The tally carries over: a check stays valid until the next change
 	pi.on("message_start", async (event) => {
@@ -63,11 +66,11 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("evidence", {
-		description: "Show what the AI looked up, changed, and verified in this request",
+		description: "Show what the AI looked up, changed, and verified in this session",
 		handler: async (_args, ctx) => {
 			const at = (n: number) => (n === 0 ? "never" : `step ${n}`);
 			ctx.ui.notify(
-				`This request: ${ledger.seq} steps. Last lookup: ${at(ledger.lastLook)}. Last change: ${at(ledger.lastChange)}. Last check: ${at(ledger.lastVerify)}.`,
+				`This session: ${ledger.seq} steps (this request from step ${ledger.requestStart + 1}). Last lookup: ${at(ledger.lastLook)}. Last change: ${at(ledger.lastChange)}. Last check: ${at(ledger.lastVerify)}.`,
 				"info",
 			);
 		},
