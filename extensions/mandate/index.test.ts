@@ -185,6 +185,13 @@ test("in the default look, a reply that asks permission instead of raising the m
 	assert.equal((await m.fire("agent_before_settle", settle("改行を足しましょうか？")))?.continue, true);
 });
 
+test("in the default look, asking before an outward action is not sent back", async () => {
+	const m = await setup();
+	await m.userSays("イシューはクローズした？");
+	const reply = "ログイン関連はまだ閉じていません。パスワード保存は実装完了として閉じてよいですか？";
+	assert.equal(await m.fire("agent_before_settle", settle(reply)), undefined);
+});
+
 test("a plan the user asked for, or a reply that only explains read-only, is not sent back", async () => {
 	const plan = await setup();
 	await plan.userSays("ログインのバグを直す計画を立てて");

@@ -43,9 +43,24 @@ test("claims and fact questions are recognized", () => {
 });
 
 test("denials are not claims, and closing questions are not fact questions", () => {
-	for (const r of ["テストは通りませんでした。", "テストが通らない状態です。", "ビルドが成功しませんでした。", "I have not verified this yet.", "Tests don't pass yet.", "まだ検証していません。"])
+	for (const r of [
+		"テストは通りませんでした。",
+		"テストが通らない状態です。",
+		"ビルドが成功しませんでした。",
+		"I have not verified this yet.",
+		"Tests don't pass yet.",
+		"まだ検証していません。",
+		"このメモだけでは、作業の許可や完了、テスト成功を意味しません。",
+		"テストが通ることは確認していません。",
+		"テストが通るとは限りません。",
+		"ビルドが成功したかは確認できていません。",
+	])
 		assert.equal(claimsItWorks(r), undefined, r);
 	assert.equal(claimsItWorks("1件は通りませんでしたが、直した後はテストが通りました。")?.kind, "passes", "a later affirmation still counts");
+	assert.equal(claimsItWorks("テストが通ったことを確認しました。")?.kind, "passes", "confirming is not denying");
+	assert.equal(claimsItWorks("テストが通り、問題ありません。")?.kind, "passes");
+	assert.equal(claimsItWorks("テストが通ることを確認し、問題ないです。")?.kind, "passes", "a later ない in another clause is not a denial");
+	assert.equal(claimsItWorks("ビルドが成功したことを確認。問題ない状態です。")?.kind, "passes");
 	assert.ok(!asksForFact("設定ファイルのパスを確認しました。次に進めますか？"), "the path sentence is not the question");
 	assert.ok(!asksForFact("他に質問はありますか？"));
 	assert.ok(!asksForFact("A と B、どれがいいですか？"));
@@ -63,7 +78,7 @@ test("a 'tests pass' claim needs a check after the last change", () => {
 	assert.match(checkClaims(reply, ledger("change"))[0], /after the last change/);
 	assert.match(checkClaims(reply, ledger("change", "verify", "change"))[0], /after the last change/);
 	assert.deepEqual(checkClaims(reply, ledger("change", "verify")), []);
-	assert.match(checkClaims(reply, ledger("look"))[0], /during this request/);
+	assert.match(checkClaims(reply, ledger("look"))[0], /in this session/);
 	assert.deepEqual(checkClaims(reply, ledger("verify")), [], "checked without changing anything");
 	assert.deepEqual(checkClaims("直しました。テストはまだです。", ledger("change")), []);
 });
@@ -117,11 +132,39 @@ test("each /goal round gets its own check", async () => {
 	assert.equal((await m.settle("テストも通りました。"))?.continue, true, "round 2 is checked too");
 });
 
-test("a backed claim passes, and a new request starts a new tally", async () => {
+test("a check carries over to the next request until the next change; a fact question needs a lookup in its own request", async () => {
 	const m = await setup();
 	await m.ran("edit", { path: "a.ts" });
 	await m.ran("bash", { command: "make test" });
 	assert.equal(await m.settle("直して、テストも通りました。"), undefined);
+	await m.fire("input", { text: "テスト通った？", source: "interactive" });
+	assert.equal(await m.settle("はい、テストは通っています。"), undefined, "the run in the last request still backs it");
 	await m.fire("input", { text: "設定はどうなってる？", source: "interactive" });
 	assert.equal((await m.settle("設定ファイルはどこにありますか？"))?.continue, true);
+	await m.fire("input", { text: "もう一か所直して", source: "interactive" });
+	await m.ran("edit", { path: "b.ts" });
+	assert.equal((await m.settle("直して、テストも通りました。"))?.continue, true, "a later change needs a new run");
+});
+
+test("a look in an earlier request does not back a 'works' claim; a change made with ! undoes an earlier run", async () => {
+	const m = await setup();
+	await m.ran("edit", { path: "a.ts" });
+	await m.fire("input", { text: "README を読んで", source: "interactive" });
+	await m.ran("read", { path: "README.md" });
+	await m.fire("input", { text: "動く？", source: "interactive" });
+	assert.equal((await m.settle("動作確認しました。"))?.continue, true);
+
+	const u = await setup();
+	await u.ran("edit", { path: "a.ts" });
+	await u.ran("bash", { command: "make test" });
+	await u.fire("user_bash", { command: "git stash pop", excludeFromContext: false, cwd: "/x" });
+	await u.fire("input", { text: "テスト通った？", source: "interactive" });
+	assert.equal((await u.settle("テストは通っています。"))?.continue, true);
+});
+
+test("a new session starts an empty tally", async () => {
+	const m = await setup();
+	await m.ran("bash", { command: "make test" });
+	await m.fire("session_start", {});
+	assert.equal((await m.settle("テストは通っています。"))?.continue, true);
 });
