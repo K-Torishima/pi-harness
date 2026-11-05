@@ -71,7 +71,8 @@ function untrackedAsDiff(cwd: string, paths: string[]): string {
 			if (statSync(path).size > MAX_FILE) continue;
 			const text = readFileSync(path, "utf8");
 			if (text.includes("\0")) continue;
-			parts.push(`+++ b/${f}`, "@@ -0,0 +1 @@", ...text.split("\n").map((l) => `+${l}`));
+			const lines = text.split("\n");
+			parts.push(`+++ b/${f}`, `@@ -0,0 +1,${lines.length} @@`, ...lines.map((l) => `+${l}`));
 		} catch {
 			// Unreadable files are skipped
 		}

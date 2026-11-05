@@ -49,6 +49,34 @@ export type PersonalTerms = { homeDir?: string; emails?: string[]; terms?: strin
 /** Files that usually hold secrets. Adding lines to them is the problem; removing lines is fine */
 const SECRET_FILES = /(?:^|\/)(?:\.env(?:\.(?!example$|sample$|template$)[\w.-]+)?|id_(?:rsa|ed25519|ecdsa|dsa)|[\w.-]+\.pem|credentials\.json|\.netrc)$/;
 
+/** The path in a `+++ ` header. Git quotes paths with non-ASCII or special characters, C style with octal bytes */
+export function diffPath(header: string): string {
+	let path = header.trim();
+	if (path.startsWith('"') && path.endsWith('"') && path.length > 1) {
+		const bytes: number[] = [];
+		const body = path.slice(1, -1);
+		const named: Record<string, number> = { a: 7, b: 8, t: 9, n: 10, v: 11, f: 12, r: 13, '"': 34, "\\": 92 };
+		for (let i = 0; i < body.length; i++) {
+			const ch = body[i];
+			if (ch !== "\\") {
+				bytes.push(...Buffer.from(ch, "utf8"));
+				continue;
+			}
+			const octal = body.slice(i + 1, i + 4);
+			if (/^[0-7]{3}$/.test(octal)) {
+				bytes.push(parseInt(octal, 8));
+				i += 3;
+			} else {
+				const next = body[i + 1] ?? "";
+				bytes.push(named[next] ?? next.charCodeAt(0));
+				i += 1;
+			}
+		}
+		path = Buffer.from(bytes).toString("utf8");
+	}
+	return path.replace(/^b\//, "");
+}
+
 /**
  * Look at the lines a unified diff adds (git diff -U0 output) and report secrets and personal details.
  * Only added lines count; removing a secret is fine.
@@ -62,19 +90,38 @@ export function scanDiff(diff: string, personal: PersonalTerms = {}): Finding[] 
 	];
 	let file = "";
 	let line = 0;
+	// Lines the current hunk still holds. Inside a hunk, a line that looks like a header (`+++ b/x`) is content
+	let oldLeft = 0;
+	let newLeft = 0;
 	// Secret files already reported, so a file is listed once however many lines it gains
 	const reported = new Set<string>();
 	for (const raw of diff.split("\n")) {
-		if (raw.startsWith("+++ ")) {
-			file = raw.replace(/^\+\+\+ (?:b\/)?/, "").trim();
+		if (oldLeft === 0 && newLeft === 0) {
+			if (raw.startsWith("+++ ")) {
+				file = diffPath(raw.slice(4));
+				continue;
+			}
+			const hunk = raw.match(/^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/);
+			if (hunk) {
+				oldLeft = Number(hunk[1] ?? 1);
+				line = Number(hunk[2]);
+				newLeft = Number(hunk[3] ?? 1);
+			}
 			continue;
 		}
-		const hunk = raw.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
-		if (hunk) {
-			line = Number(hunk[1]);
+		if (raw.startsWith("\\")) continue; // "\ No newline at end of file"
+		if (raw.startsWith("-")) {
+			oldLeft--;
 			continue;
 		}
-		if (!raw.startsWith("+")) continue;
+		if (!raw.startsWith("+")) {
+			// A context line belongs to both sides
+			oldLeft--;
+			newLeft--;
+			line++;
+			continue;
+		}
+		newLeft--;
 		const text = raw.slice(1);
 		if (SECRET_FILES.test(file) && !reported.has(file)) {
 			reported.add(file);
