@@ -72,6 +72,8 @@ export default function (pi: ExtensionAPI) {
 				{
 					type: "custom_message" as const,
 					customType: "reply",
+					// Marks a send-back for tools that read the session log (tools/friction)
+					details: { sentBack: true },
 					content: [
 						"[reply] Your last reply does not fit the reader yet. Rewrite it and send only the rewritten reply. Do not mention this note.",
 						...problems.map((p) => `- ${p}`),

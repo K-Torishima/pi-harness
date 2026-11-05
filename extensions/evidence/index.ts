@@ -52,6 +52,8 @@ export default function (pi: ExtensionAPI) {
 				{
 					type: "custom_message" as const,
 					customType: "evidence",
+					// Marks a send-back for tools that read the session log (tools/friction)
+					details: { sentBack: true },
 					content: ["[evidence] Before you finish, fix this in your reply. Do not mention this note.", ...problems.map((p) => `- ${p}`)].join("\n"),
 					display: false,
 				},

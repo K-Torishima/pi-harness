@@ -193,7 +193,7 @@ export default function (pi: ExtensionAPI) {
 		if (!content) return undefined;
 		nudged = true;
 		return {
-			entries: [...event.entries, { type: "custom_message" as const, customType: "mandate", content, display: false }],
+			entries: [...event.entries, { type: "custom_message" as const, customType: "mandate", content, display: false, details: { sentBack: true } }],
 			continue: true,
 		};
 	});

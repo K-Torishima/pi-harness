@@ -1,3 +1,5 @@
+import { textOf } from "../../extensions/lib/request.ts";
+
 /**
  * Find the moments in a pi session where the user and the agent did not understand each other.
  * Pure functions over session log lines, so tests can feed them made-up sessions.
@@ -19,30 +21,28 @@ export type SessionReport = { cwd: string; userTurns: number; incidents: Inciden
 
 /** The user says the agent got it wrong, did not listen, or did something not asked for */
 const PUSHBACK =
-	/違う|ちがう|そうじゃな|そういうことじゃな|そこじゃな|通じてな|話が通じ|聞いてな|読んでな|言ったよね|言ったじゃん|さっき(?:も)?言|何回|何度も|頼んでな|勝手に|余計な|って言った(?:よね|じゃん|のに)|\bnot what I\b|\bI (?:said|asked)\b|\bthat'?s wrong\b/i;
+	/違う|ちがう|そうじゃな|そういうことじゃな|そこじゃな|通じてな|話が通じ|聞いてな|読んでな|言ったよね|言ったじゃん|さっき(?:も)?言|何回(?:も|言)|何度も|頼んでな|勝手に|余計な|って言った(?:よね|じゃん|のに)|\bnot what I\b|\bI (?:said|asked)\b|\bthat'?s wrong\b/i;
 /** A short question about where the work is: the agent did not make its state visible */
 const STATUS = /どこまで|進捗|(?:終わ|おわ)って(?:る|ます)[？?]|(?:した|できた|やった|終わった|直した|入れた)[？?]\s*$/;
 const STATUS_MAX = 40;
+/** Longer messages are pasted logs, pages, or templates, where these words do not speak to the agent */
+const TYPED_MAX = 200;
 /** How alike two user messages must be to count as asking again */
 const SAME = 0.8;
 /** Shorter messages ("お願いします", "OK") repeat on purpose */
 const ASKED_MIN = 15;
-/** Send-backs from the harness: replies it judged wrong and returned to the agent */
-const SENT_BACK = /^\[(?:reply|evidence)\]|^\[mandate\] (?:Your reply|You are in do mode)/;
+/**
+ * Send-backs from the harness: replies it judged wrong and returned to the agent. reply, evidence, and mandate
+ * mark them with details.sentBack; the wording is the fallback for logs written before the mark
+ */
+const SENT_BACK_TEXT = /^\[(?:reply|evidence)\]|^\[mandate\] (?:Your reply|You are in do mode)/;
+/** The /goal kickoff, which the goal extension sends as a user message. Its fixed line is checked against goal's source in the tests */
+export const GOAL_KICKOFF = "Keep working on your own until this goal is done.";
 
 const oneLine = (text: string, max: number) => {
 	const flat = text.replace(/\s+/g, " ").trim();
 	return flat.length > max ? `${flat.slice(0, max)}…` : flat;
 };
-
-export function textOf(content: unknown): string {
-	if (typeof content === "string") return content;
-	if (!Array.isArray(content)) return "";
-	return content
-		.filter((c) => c && c.type === "text" && typeof c.text === "string")
-		.map((c) => c.text)
-		.join("\n");
-}
 
 /** Dice similarity over character bigrams, so small rewordings still match */
 export function similarity(a: string, b: string): number {
@@ -71,9 +71,11 @@ export function readSession(lines: string[], since = ""): SessionReport {
 		if (i.time > since) report.incidents.push(i);
 	};
 	let lastAssistant = "";
-	let pendingInterrupt: Incident | undefined;
+	// An interrupt waits for the user's next message, which says why; it is reported at that message's time
+	let interruptedAfter: string | undefined;
 	const recentUser: string[] = [];
-	const blocked = new Map<string, { count: number; first: Incident }>();
+	// Each block is reported at the time it repeated, so a repeat after the last run is not lost
+	const blocked = new Map<string, number>();
 	for (const raw of lines) {
 		let entry: any;
 		try {
@@ -87,7 +89,9 @@ export function readSession(lines: string[], since = ""): SessionReport {
 		}
 		if (entry?.type === "custom_message") {
 			const text = textOf(entry.content);
-			if (SENT_BACK.test(text)) add({ kind: "sent-back", time: String(entry.timestamp ?? ""), text: oneLine(text, 300), before: lastAssistant || undefined });
+			if (entry.details?.sentBack === true || SENT_BACK_TEXT.test(text)) {
+				add({ kind: "sent-back", time: String(entry.timestamp ?? ""), text: oneLine(text, 300), before: lastAssistant || undefined });
+			}
 			continue;
 		}
 		if (entry?.type !== "message" || !entry.message) continue;
@@ -96,38 +100,44 @@ export function readSession(lines: string[], since = ""): SessionReport {
 		if (m.role === "assistant") {
 			const text = textOf(m.content);
 			if (text.trim()) lastAssistant = oneLine(text, 300);
-			if (m.stopReason === "aborted") pendingInterrupt = { kind: "interrupted", time, text: "", before: lastAssistant || undefined };
+			if (m.stopReason === "aborted") interruptedAfter = lastAssistant;
 			continue;
 		}
 		if (m.role === "toolResult") {
 			const text = textOf(m.content);
 			if (m.isError && /^Blocked\b/.test(text)) {
 				const key = `${m.toolName}\n${text.split("\n")[0]}`;
-				const seen = blocked.get(key);
-				if (seen) seen.count++;
-				else blocked.set(key, { count: 1, first: { kind: "blocked-retry", time, text: oneLine(text, 300) } });
+				const count = (blocked.get(key) ?? 0) + 1;
+				blocked.set(key, count);
+				if (count >= 2) add({ kind: "blocked-retry", time, text: `${count}× ${oneLine(text, 300)}` });
 			}
 			continue;
 		}
 		if (m.role !== "user") continue;
 		const text = textOf(m.content).trim();
-		if (!text) continue;
+		// Empty messages and the /goal kickoff were not typed by the user
+		if (!text || text.includes(GOAL_KICKOFF)) continue;
 		if (time > since) report.userTurns++;
-		if (pendingInterrupt) {
-			add({ ...pendingInterrupt, text: oneLine(text, 300) });
-			pendingInterrupt = undefined;
+		const short = oneLine(text, 300);
+		if (interruptedAfter !== undefined) {
+			add({ kind: "interrupted", time, text: short, before: interruptedAfter || undefined });
+			interruptedAfter = undefined;
 		}
 		const before = lastAssistant || undefined;
-		const short = oneLine(text, 300);
-		if (PUSHBACK.test(text)) add({ kind: "pushback", time, text: short, before });
+		const typed = text.length <= TYPED_MAX;
+		if (typed && PUSHBACK.test(text)) add({ kind: "pushback", time, text: short, before });
 		else if (text.length <= STATUS_MAX && STATUS.test(text)) add({ kind: "status-check", time, text: short, before });
-		else if (text.length >= ASKED_MIN && recentUser.some((u) => similarity(u, text) >= SAME)) add({ kind: "asked-again", time, text: short, before });
+		else if (typed && text.length >= ASKED_MIN && recentUser.some((u) => similarity(u, text) >= SAME)) add({ kind: "asked-again", time, text: short, before });
 		recentUser.push(text);
 		if (recentUser.length > 5) recentUser.shift();
 	}
-	if (pendingInterrupt) add({ ...pendingInterrupt, text: "(no message after it)" });
-	for (const { count, first } of blocked.values()) {
-		if (count >= 2) add({ ...first, text: `${count}× ${first.text}` });
+	// Several retries of one block in a row are one moment: keep the last report for each block
+	const lastRetry = new Map<string, Incident>();
+	const rest: Incident[] = [];
+	for (const i of report.incidents) {
+		if (i.kind === "blocked-retry") lastRetry.set(i.text.replace(/^\d+× /, ""), i);
+		else rest.push(i);
 	}
+	report.incidents = [...rest, ...lastRetry.values()].sort((a, b) => a.time.localeCompare(b.time));
 	return report;
 }

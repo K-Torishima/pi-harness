@@ -62,7 +62,7 @@ It is grown one piece at a time: only things that were actually missed while usi
 ### Looking back
 
 - `tools/friction/` — a daily report of where pi sessions went wrong between you and the AI: pushback ("違う", "言ったよね"), requests asked again, "コミットした？" style status checks, runs stopped with Esc, the same block hit more than once, and replies the harness sent back. Each moment comes with the AI's words just before it
-  - `make schedule-friction` runs it every morning at 9:00 with launchd; `make friction` runs it now; `make unschedule-friction` stops it
+  - `make schedule-friction` runs it every morning at 9:00 with launchd (run it again after changing node versions); `make friction` runs it now; `make unschedule-friction` stops it
   - Reports go to `~/.pi/agent/friction/` and are never committed, because they quote your sessions. Sessions started from a temporary directory are left out
 
 ### Usage and voice

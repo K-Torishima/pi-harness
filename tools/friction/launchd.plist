@@ -7,11 +7,11 @@
 	<string>@LABEL@</string>
 	<key>ProgramArguments</key>
 	<array>
-		<!-- A login shell, so node is found the same way as in a terminal (asdf, mise, Homebrew) -->
-		<string>/bin/zsh</string>
-		<string>-lc</string>
-		<string>exec node "$0"</string>
+		<!-- The node binary found at install time; version managers' shims need a shell setup launchd does not have -->
+		<string>@NODE@</string>
 		<string>@SCRIPT@</string>
+		<string>--agent-dir</string>
+		<string>@AGENT_DIR@</string>
 	</array>
 	<key>StartCalendarInterval</key>
 	<dict>

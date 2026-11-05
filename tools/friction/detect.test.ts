@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { readSession, similarity } from "./detect.ts";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { GOAL_KICKOFF, readSession, similarity } from "./detect.ts";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
 
 let clock = 0;
 const at = () => `2026-11-05T10:${String(clock++).padStart(2, "0")}:00.000Z`;
@@ -63,6 +68,43 @@ test("since drops what was already reported, and user turns count only after it"
 	const r = readSession(lines, since);
 	assert.deepEqual(r.incidents.map((i) => i.kind), ["pushback", "status-check"]);
 	assert.equal(r.userTurns, 2);
+});
+
+test("pasted text and neutral questions are not pushback", () => {
+	const pasted = `エラーが出た\n${"x".repeat(200)}\n期待値と違う`;
+	assert.deepEqual(kinds([header(), user(pasted), user("このループ何回回る？")]), []);
+	assert.deepEqual(kinds([header(), user("何回も言ってるけど")]), ["pushback"]);
+});
+
+test("the /goal kickoff is not a user turn and never counts as asked again", () => {
+	const kickoff = (goal: string) => `Goal: ${goal}\n\n${GOAL_KICKOFF} How to proceed:\n1. First, …`;
+	const r = readSession([header(), user(kickoff("テストを足す")), agent("…"), user(kickoff("README を直す"))]);
+	assert.deepEqual([r.userTurns, r.incidents], [0, []]);
+	assert.ok(readFileSync(join(HERE, "../../extensions/goal/index.ts"), "utf8").includes(GOAL_KICKOFF), "goal still sends this line");
+});
+
+test("an interrupt with no message yet waits for the next run, where its reason shows", () => {
+	clock = 0;
+	const lines = [header(), agent("全部読み直します", "aborted")];
+	assert.deepEqual(kinds(lines), []);
+	const later = [...lines, user("画面だけ見て")];
+	const r = readSession(later, "2026-11-05T10:00:30.000Z");
+	assert.deepEqual(r.incidents.map((i) => [i.kind, i.text, i.before]), [["interrupted", "画面だけ見て", "全部読み直します"]]);
+});
+
+test("a block repeated after the last run is reported, once, with its count", () => {
+	clock = 0;
+	const lines = [header(), blocked("Blocked by guard: rm"), blocked("Blocked by guard: rm"), blocked("Blocked by guard: rm")];
+	assert.deepEqual(readSession(lines).incidents.map((i) => i.text), ["3× Blocked by guard: rm"]);
+	assert.deepEqual(readSession(lines, "2026-11-05T10:00:30.000Z").incidents.map((i) => i.text), ["3× Blocked by guard: rm"]);
+});
+
+test("a send-back is found by its mark whatever it says; reply, evidence, and mandate set the mark", () => {
+	const marked = JSON.stringify({ type: "custom_message", customType: "mandate", timestamp: at(), content: "[mandate] reworded", details: { sentBack: true } });
+	assert.deepEqual(kinds([header(), marked]), ["sent-back"]);
+	for (const ext of ["reply", "evidence", "mandate"]) {
+		assert.match(readFileSync(join(HERE, `../../extensions/${ext}/index.ts`), "utf8"), /details: \{ sentBack: true \}/, ext);
+	}
 });
 
 test("broken lines are skipped", () => {

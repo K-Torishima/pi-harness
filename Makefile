@@ -25,12 +25,14 @@ FRICTION_LABEL := local.pi-harness.friction
 FRICTION_PLIST := $(HOME)/Library/LaunchAgents/$(FRICTION_LABEL).plist
 
 friction:
-	node tools/friction/main.ts
+	node tools/friction/main.ts --agent-dir $(AGENT_DIR)
 
-# Run the report every morning at 9:00 with launchd; a Mac that was asleep runs it on waking
+# Run the report every morning at 9:00 with launchd; a Mac that was asleep runs it on waking.
+# The node binary is resolved now, so run this again after changing node versions
 schedule-friction:
 	mkdir -p $(AGENT_DIR)/friction $(dir $(FRICTION_PLIST))
-	sed -e 's|@LABEL@|$(FRICTION_LABEL)|' -e 's|@SCRIPT@|$(CURDIR)/tools/friction/main.ts|' -e 's|@LOG@|$(AGENT_DIR)/friction/launchd.log|' tools/friction/launchd.plist > $(FRICTION_PLIST)
+	sed -e 's|@LABEL@|$(FRICTION_LABEL)|' -e "s|@NODE@|$$(node -p process.execPath)|" -e 's|@SCRIPT@|$(CURDIR)/tools/friction/main.ts|' \
+		-e 's|@AGENT_DIR@|$(AGENT_DIR)|' -e 's|@LOG@|$(AGENT_DIR)/friction/launchd.log|' tools/friction/launchd.plist > $(FRICTION_PLIST)
 	launchctl bootout gui/$$(id -u)/$(FRICTION_LABEL) 2>/dev/null || true
 	launchctl bootstrap gui/$$(id -u) $(FRICTION_PLIST)
 
