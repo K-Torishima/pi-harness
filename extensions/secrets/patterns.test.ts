@@ -42,6 +42,15 @@ test("scanDiff ignores removed lines and placeholders", () => {
 	assert.equal(scanDiff(diff("a.ts", ["pass", 'word = "hunter2-but-longer"'].join(""))).length, 1);
 });
 
+test("test files may hold made-up passwords, but not real key shapes", () => {
+	const made = ['pass', 'word: "private-password"'].join("");
+	for (const file of ["src/a/__tests__/monitoring.test.ts", "src/a.spec.tsx", "test/helpers.ts", "fixtures/login.json"]) {
+		assert.deepEqual(scanDiff(diff(file, made)), [], file);
+	}
+	assert.equal(scanDiff(diff("src/login.ts", made)).length, 1, "outside tests it still counts");
+	assert.equal(scanDiff(diff("src/a/__tests__/x.test.ts", `const t = "${FAKE.github}";`))[0].what, "GitHub token");
+});
+
 test("scanDiff catches personal details", () => {
 	const personal = { homeDir: "/home/someone", emails: ["someone@example.org"], terms: ["secret-client"] };
 	const found = scanDiff(diff("README.md", "run /home/someone/work/x", "mail someone@example.org", "for secret-client"), personal).map((f) => f.what);

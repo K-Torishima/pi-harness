@@ -47,6 +47,12 @@ export type PersonalTerms = { homeDir?: string; emails?: string[]; terms?: strin
 const SECRET_FILES = /(?:^|\/)(?:\.env(?:\.(?!example$|sample$|template$)[\w.-]+)?|id_(?:rsa|ed25519|ecdsa|dsa)|[\w.-]+\.pem|credentials\.json|\.netrc)$/;
 
 /**
+ * Test files and fixtures. Their `password = "..."` values are made up so a test has something to look for,
+ * so only real key shapes (SECRETS) are reported there
+ */
+const TEST_FILES = /(?:^|\/)(?:__tests__|__mocks__|tests?|spec|fixtures?)\/|\.(?:test|spec)\.[\w]+$/;
+
+/**
  * Look at the lines a unified diff adds (git diff -U0 output) and report secrets and personal details.
  * Only added lines count; removing a secret is fine.
  */
@@ -82,7 +88,7 @@ export function scanDiff(diff: string, personal: PersonalTerms = {}): Finding[] 
 			if (re.test(text)) findings.push({ file, line, what: name });
 		}
 		const assigned = text.match(ASSIGNED);
-		if (assigned && !PLACEHOLDER.test(assigned[1])) findings.push({ file, line, what: "hard-coded secret value" });
+		if (assigned && !PLACEHOLDER.test(assigned[1]) && !TEST_FILES.test(file)) findings.push({ file, line, what: "hard-coded secret value" });
 		for (const { value, what } of terms) if (text.includes(value)) findings.push({ file, line, what });
 		line++;
 	}
