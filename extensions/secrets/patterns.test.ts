@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { FAKE } from "../../test/fake-secrets.ts";
-import { addScope, commandDir, outgoingActions, redact, scanDiff } from "./patterns.ts";
+import { addScope, commandDir, diffHeader, diffPath, outgoingActions, redact, scanDiff } from "./patterns.ts";
 
 test("redact hides every kind of secret and says what it hid", () => {
 	const text = `token=${FAKE.github}\naws ${FAKE.aws}\n${FAKE.key}\nslack ${FAKE.slack} and ${FAKE.anthropic} ${FAKE.npm}`;
@@ -50,6 +50,50 @@ test("made-up lowercase words are not secrets, wherever they are; generated valu
 	for (const value of ["Rl9s8dkQ2pZx", "a8f3c9e1b2d4f6a7", "Correct-Horse-Battery"]) {
 		assert.equal(scanDiff(diff("config/database.test.yml", `${key}: "${value}"`)).length, 1, value);
 	}
+});
+
+test("diffPath reads quoted paths with non-ASCII names", () => {
+	assert.equal(diffPath("b/src/a.ts"), "src/a.ts");
+	assert.equal(diffPath('"b/src/\\343\\203\\255\\343\\202\\260.env"'), "src/ログ.env");
+	assert.equal(diffPath('"b/a \\"q\\".ts"'), 'a "q".ts');
+	assert.equal(diffPath("/dev/null"), "/dev/null");
+});
+
+test("diffPath keeps spaces in names, drops git's trailing tab, and decodes characters outside the BMP", () => {
+	assert.equal(diffPath("b/ notes.env \t"), " notes.env ");
+	assert.equal(diffPath('"b/😀 \\"x\\"/.env"'), '😀 "x"/.env');
+});
+
+test("diffHeader quotes only names git would quote, and diffPath reads every one back", () => {
+	assert.equal(diffHeader("src/ロ.ts"), "+++ b/src/ロ.ts");
+	for (const name of ["a.ts", "ロ/😀 x.ts", "x\n.env", 'q"uote\\back.ts', "tab\there", "del\x7f"]) {
+		assert.equal(diffPath(diffHeader(name).slice(4)), name, JSON.stringify(name));
+	}
+	const newline = [diffHeader("x\n/.env"), "@@ -0,0 +1 @@", "+A=1"].join("\n");
+	assert.deepEqual(scanDiff(newline), [{ file: "x\n/.env", line: 0, what: "a file that usually holds secrets" }]);
+});
+
+test("a hunk shorter than its header does not swallow the next file", () => {
+	const text = ["+++ b/src/a.ts", "@@ -0,0 +1,5 @@", "+one", "diff --git a/.env b/.env", "+++ b/.env", "@@ -0,0 +1 @@", "+A=1"].join("\n");
+	assert.deepEqual(scanDiff(text), [{ file: ".env", line: 0, what: "a file that usually holds secrets" }]);
+});
+
+test("added lines in a format the parser does not know are still scanned", () => {
+	const combined = ["+++ b/src/m.ts", "@@@ -1,0 -1,0 +1,1 @@@", `++const t = "${FAKE.github}";`].join("\n");
+	assert.equal(scanDiff(combined)[0]?.what, "GitHub token");
+});
+
+test("a quoted secret file name is still a secret file", () => {
+	const quoted = ['+++ "b/\\343\\203\\255/.env"', "@@ -0,0 +1 @@", "+A=1"].join("\n");
+	assert.deepEqual(scanDiff(quoted), [{ file: "ロ/.env", line: 0, what: "a file that usually holds secrets" }]);
+});
+
+test("a header-looking line inside a hunk stays in the same file", () => {
+	const text = ["+++ b/.env", "@@ -0,0 +1,3 @@", "+++ b/notes.md", "+@@ -0,0 +1 @@", "+A=1", "+++ b/src/a.ts", "@@ -1 +1 @@", "-old", "+new"].join("\n");
+	assert.deepEqual(scanDiff(text), [{ file: ".env", line: 0, what: "a file that usually holds secrets" }]);
+	// Line numbers keep counting across removed lines, context lines, and the no-newline marker
+	const mixed = ["+++ b/src/b.ts", "@@ -5,2 +5,3 @@", "-gone", " kept", "+ok", "\\ No newline at end of file", `+const t = "${FAKE.github}";`, "-gone too"].join("\n");
+	assert.deepEqual(scanDiff(mixed), [{ file: "src/b.ts", line: 7, what: "GitHub token" }]);
 });
 
 test("scanDiff catches personal details", () => {

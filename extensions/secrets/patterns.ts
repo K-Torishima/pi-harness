@@ -49,6 +49,37 @@ export type PersonalTerms = { homeDir?: string; emails?: string[]; terms?: strin
 /** Files that usually hold secrets. Adding lines to them is the problem; removing lines is fine */
 const SECRET_FILES = /(?:^|\/)(?:\.env(?:\.(?!example$|sample$|template$)[\w.-]+)?|id_(?:rsa|ed25519|ecdsa|dsa)|[\w.-]+\.pem|credentials\.json|\.netrc)$/;
 
+// Escapes git uses in quoted paths, other than octal bytes
+const UNESCAPE: Record<string, string> = { a: "\x07", b: "\b", t: "\t", n: "\n", v: "\v", f: "\f", r: "\r", '"': '"', "\\": "\\" };
+const ESCAPE = Object.fromEntries(Object.entries(UNESCAPE).map(([k, v]) => [v, `\\${k}`]));
+// Characters that make git quote a path, apart from non-ASCII (the scanner runs git with core.quotePath=false)
+const NEEDS_QUOTES = /["\\\x00-\x1f\x7f]/;
+
+/**
+ * The path in a `+++ ` header. Git quotes a path that holds `"`, `\`, or control characters, C style with octal bytes.
+ * The tab git puts after a name with spaces is dropped; other spaces are part of the name
+ */
+export function diffPath(header: string): string {
+	let path = header.replace(/\t$/, "");
+	if (path.length > 1 && path.startsWith('"') && path.endsWith('"')) {
+		const bytes: Buffer[] = [];
+		for (const part of path.slice(1, -1).match(/\\[0-7]{3}|\\.|[^\\]+/gs) ?? []) {
+			if (/^\\[0-7]{3}$/.test(part)) bytes.push(Buffer.from([parseInt(part.slice(1), 8)]));
+			else if (part.startsWith("\\")) bytes.push(Buffer.from(UNESCAPE[part[1]] ?? part[1], "utf8"));
+			else bytes.push(Buffer.from(part, "utf8"));
+		}
+		path = Buffer.concat(bytes).toString("utf8");
+	}
+	return path.replace(/^b\//, "");
+}
+
+/** A `+++ ` header for a path, quoted the way git does when it has to be, so diffPath reads it back */
+export function diffHeader(path: string): string {
+	if (!NEEDS_QUOTES.test(path)) return `+++ b/${path}`;
+	const body = [...`b/${path}`].map((ch) => ESCAPE[ch] ?? (ch < " " || ch === "\x7f" ? `\\${ch.charCodeAt(0).toString(8).padStart(3, "0")}` : ch)).join("");
+	return `+++ "${body}"`;
+}
+
 /**
  * Look at the lines a unified diff adds (git diff -U0 output) and report secrets and personal details.
  * Only added lines count; removing a secret is fine.
@@ -62,19 +93,43 @@ export function scanDiff(diff: string, personal: PersonalTerms = {}): Finding[] 
 	];
 	let file = "";
 	let line = 0;
+	// Lines the current hunk still holds. Inside a hunk, a line that looks like a header (`+++ b/x`) is content
+	let oldLeft = 0;
+	let newLeft = 0;
 	// Secret files already reported, so a file is listed once however many lines it gains
 	const reported = new Set<string>();
 	for (const raw of diff.split("\n")) {
-		if (raw.startsWith("+++ ")) {
-			file = raw.replace(/^\+\+\+ (?:b\/)?/, "").trim();
+		// A hunk ends when its counts run out, or at any line a hunk cannot hold, so one miscount does not
+		// leave the rest of the diff read as hunk content
+		if ((oldLeft > 0 || newLeft > 0) && !/^[ +\-\\]/.test(raw)) oldLeft = newLeft = 0;
+		if (oldLeft <= 0 && newLeft <= 0) {
+			if (raw.startsWith("+++ ")) {
+				file = diffPath(raw.slice(4));
+				continue;
+			}
+			const hunk = raw.match(/^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/);
+			if (hunk) {
+				oldLeft = Number(hunk[1] ?? 1);
+				line = Number(hunk[2]);
+				newLeft = Number(hunk[3] ?? 1);
+				continue;
+			}
+			// Outside a hunk, an added line in a shape this parser does not know is still scanned
+			if (!raw.startsWith("+")) continue;
+		} else if (raw.startsWith("\\")) {
+			continue; // "\ No newline at end of file"
+		} else if (raw.startsWith("-")) {
+			oldLeft--;
 			continue;
-		}
-		const hunk = raw.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
-		if (hunk) {
-			line = Number(hunk[1]);
+		} else if (!raw.startsWith("+")) {
+			// A context line belongs to both sides
+			oldLeft--;
+			newLeft--;
+			line++;
 			continue;
+		} else {
+			newLeft--;
 		}
-		if (!raw.startsWith("+")) continue;
 		const text = raw.slice(1);
 		if (SECRET_FILES.test(file) && !reported.has(file)) {
 			reported.add(file);
