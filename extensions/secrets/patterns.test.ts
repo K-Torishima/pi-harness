@@ -42,6 +42,16 @@ test("scanDiff ignores removed lines and placeholders", () => {
 	assert.equal(scanDiff(diff("a.ts", ["pass", 'word = "hunter2-but-longer"'].join(""))).length, 1);
 });
 
+test("made-up lowercase words are not secrets, wherever they are; generated values still are", () => {
+	const key = ["pass", "word"].join("");
+	for (const file of ["src/__tests__/monitoring.test.ts", "auth/login_test.go", "src/login.ts"]) {
+		assert.deepEqual(scanDiff(diff(file, `${key}: "private-password"`, `${key} := "supersecretvalue"`)), [], file);
+	}
+	for (const value of ["Rl9s8dkQ2pZx", "a8f3c9e1b2d4f6a7", "Correct-Horse-Battery"]) {
+		assert.equal(scanDiff(diff("config/database.test.yml", `${key}: "${value}"`)).length, 1, value);
+	}
+});
+
 test("scanDiff catches personal details", () => {
 	const personal = { homeDir: "/home/someone", emails: ["someone@example.org"], terms: ["secret-client"] };
 	const found = scanDiff(diff("README.md", "run /home/someone/work/x", "mail someone@example.org", "for secret-client"), personal).map((f) => f.what);

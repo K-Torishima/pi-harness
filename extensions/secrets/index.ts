@@ -181,7 +181,7 @@ export default function (pi: ExtensionAPI) {
 			const p = personalTerms(ctx.cwd);
 			const lines = [
 				"Hidden in tool output: private keys, AWS / GitHub / npm / Slack / Google / Stripe / sk- keys, JWTs",
-				"Blocked before commit, push, PR: the above, hard-coded secret values, lines added to .env / key files,",
+				"Blocked before commit, push, PR: the above, hard-coded secret values (not lowercase words like private-password), lines added to .env / key files,",
 				`  paths under ${p.homeDir}, ${p.emails?.length ? p.emails.join(", ") : "(no personal git email)"}, and ${p.terms?.length ?? 0} private terms from terms.local.json`,
 			];
 			ctx.ui.notify(lines.join("\n"), "info");
