@@ -19,7 +19,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { addScope, commandDir, type Finding, type Outgoing, outgoingActions, type PersonalTerms, redact, scanDiff } from "./patterns.ts";
+import { addScope, commandDir, diffHeader, type Finding, type Outgoing, outgoingActions, type PersonalTerms, redact, scanDiff } from "./patterns.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TERMS_FILE = join(HERE, "terms.local.json");
@@ -32,7 +32,7 @@ class CheckFailed extends Error {}
 /** Run git and return its output; throw CheckFailed when it fails, so the caller blocks instead of letting it through */
 function git(cwd: string, args: string[]): string {
 	try {
-		return execFileSync("git", args, { cwd, encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: 15000, stdio: ["ignore", "pipe", "ignore"] });
+		return execFileSync("git", ["-c", "core.quotePath=false", ...args], { cwd, encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: 15000, stdio: ["ignore", "pipe", "ignore"] });
 	} catch (e) {
 		throw new CheckFailed(`git ${args.slice(0, 2).join(" ")} failed in ${cwd}: ${(e as Error).message.split("\n")[0]}`);
 	}
@@ -72,7 +72,7 @@ function untrackedAsDiff(cwd: string, paths: string[]): string {
 			const text = readFileSync(path, "utf8");
 			if (text.includes("\0")) continue;
 			const lines = text.split("\n");
-			parts.push(`+++ b/${f}`, `@@ -0,0 +1,${lines.length} @@`, ...lines.map((l) => `+${l}`));
+			parts.push(diffHeader(f), `@@ -0,0 +1,${lines.length} @@`, ...lines.map((l) => `+${l}`));
 		} catch {
 			// Unreadable files are skipped
 		}
@@ -80,12 +80,15 @@ function untrackedAsDiff(cwd: string, paths: string[]): string {
 	return parts.join("\n");
 }
 
+/** One diff format whatever the user's git config says: no external diff or textconv, the usual a/ b/ prefixes */
+const DIFF_FORMAT = ["-U0", "--no-color", "--no-ext-diff", "--no-textconv", "--src-prefix=a/", "--dst-prefix=b/"];
+
 /** What a commit in this command would record: what is staged, plus what its own `git add` / `-a` takes in */
 function commitDiff(cwd: string, command: string): string {
-	const parts = [git(cwd, ["diff", "--cached", "-U0", "--no-color"])];
+	const parts = [git(cwd, ["diff", "--cached", ...DIFF_FORMAT])];
 	const { all, paths } = addScope(command);
-	if (all) parts.push(git(cwd, ["diff", "-U0", "--no-color"]), untrackedAsDiff(cwd, []));
-	else if (paths.length > 0) parts.push(git(cwd, ["diff", "-U0", "--no-color", "--", ...paths]), untrackedAsDiff(cwd, paths));
+	if (all) parts.push(git(cwd, ["diff", ...DIFF_FORMAT]), untrackedAsDiff(cwd, []));
+	else if (paths.length > 0) parts.push(git(cwd, ["diff", ...DIFF_FORMAT, "--", ...paths]), untrackedAsDiff(cwd, paths));
 	return parts.join("\n");
 }
 
@@ -98,7 +101,8 @@ function historyDiff(cwd: string, action: "push" | "pr"): string {
 	}
 	// No remote yet: everything in HEAD goes out
 	const range = base ? `${base}..HEAD` : "HEAD";
-	return git(cwd, ["log", "-p", "-U0", "--no-color", "--format=", range]);
+	// Merges are shown against their first parent, in the plain format the scanner reads
+	return git(cwd, ["log", "-p", ...DIFF_FORMAT, "--diff-merges=first-parent", "--format=", range]);
 }
 
 const describe = (f: Finding) => `${f.file}${f.line > 0 ? `:${f.line}` : ""} — ${f.what}`;

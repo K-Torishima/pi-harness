@@ -90,6 +90,35 @@ test("a push scans every commit, so a secret added and later removed is still ca
 	assert.match(String(r?.reason), /rewrite the commits/);
 });
 
+test("diff config does not change what is read: prefixes, non-ASCII names, and secrets added in a merge", async () => {
+	const dir = repo();
+	run(dir, "config", "diff.mnemonicPrefix", "true");
+	run(dir, "config", "diff.noprefix", "true");
+	run(dir, "branch", "-M", "main");
+	const m = await load(dir);
+	mkdirSync(join(dir, "ロ"));
+	writeFileSync(join(dir, "ロ", ".env"), "A=1\n");
+	run(dir, "add", ".");
+	const staged = await m.bash("git commit -m env");
+	assert.match(String(staged?.reason), /- ロ\/\.env — a file that usually holds secrets/);
+	run(dir, "reset", "-q");
+	unlinkSync(join(dir, "ロ", ".env"));
+	run(dir, "checkout", "-qb", "side");
+	writeFileSync(join(dir, "side.txt"), "side\n");
+	run(dir, "add", ".");
+	run(dir, "commit", "-qm", "side");
+	run(dir, "checkout", "-q", "main");
+	writeFileSync(join(dir, "main.txt"), "main\n");
+	run(dir, "add", ".");
+	run(dir, "commit", "-qm", "main");
+	run(dir, "merge", "-q", "--no-commit", "side");
+	writeFileSync(join(dir, "merged.ts"), `const t = "${FAKE.github}";\n`);
+	run(dir, "add", ".");
+	run(dir, "commit", "-qm", "merge");
+	const pushed = await m.bash("git push origin main");
+	assert.match(String(pushed?.reason), /- merged\.ts:1 — GitHub token/);
+});
+
 test("push uses git -C and cd ~/..., and the commit from a subdirectory sees untracked files at the root", async () => {
 	const dir = repo();
 	const m = await load(HERE);
