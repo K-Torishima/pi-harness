@@ -25,6 +25,9 @@ export const SECRETS: SecretPattern[] = [
 const ASSIGNED = /\b(?:api[_-]?key|secret|token|passw(?:or)?d|client[_-]?secret)\b\s*[:=]\s*['"]([^'"\s]{12,})['"]/i;
 // Values that are obviously placeholders, not real secrets
 const PLACEHOLDER = /^(?:x+|\*+|\.+|<[^>]*>|\$\{?[\w.]+\}?|your[_-].*|example.*|changeme|dummy.*|test.*|fake.*|placeholder.*)$/i;
+// Lowercase words only, such as "private-password" in a test that checks passwords are filtered.
+// Generated secrets mix in digits or capitals, so a value without either is treated as made up
+const WORDS = /^[a-z]+(?:[-_.][a-z]+)*$/;
 
 /** Replace every secret in a text with a short marker */
 export function redact(text: string): { text: string; found: string[] } {
@@ -45,12 +48,6 @@ export type PersonalTerms = { homeDir?: string; emails?: string[]; terms?: strin
 
 /** Files that usually hold secrets. Adding lines to them is the problem; removing lines is fine */
 const SECRET_FILES = /(?:^|\/)(?:\.env(?:\.(?!example$|sample$|template$)[\w.-]+)?|id_(?:rsa|ed25519|ecdsa|dsa)|[\w.-]+\.pem|credentials\.json|\.netrc)$/;
-
-/**
- * Test files and fixtures. Their `password = "..."` values are made up so a test has something to look for,
- * so only real key shapes (SECRETS) are reported there
- */
-const TEST_FILES = /(?:^|\/)(?:__tests__|__mocks__|tests?|spec|fixtures?)\/|\.(?:test|spec)\.[\w]+$/;
 
 /**
  * Look at the lines a unified diff adds (git diff -U0 output) and report secrets and personal details.
@@ -88,7 +85,7 @@ export function scanDiff(diff: string, personal: PersonalTerms = {}): Finding[] 
 			if (re.test(text)) findings.push({ file, line, what: name });
 		}
 		const assigned = text.match(ASSIGNED);
-		if (assigned && !PLACEHOLDER.test(assigned[1]) && !TEST_FILES.test(file)) findings.push({ file, line, what: "hard-coded secret value" });
+		if (assigned && !PLACEHOLDER.test(assigned[1]) && !WORDS.test(assigned[1])) findings.push({ file, line, what: "hard-coded secret value" });
 		for (const { value, what } of terms) if (text.includes(value)) findings.push({ file, line, what });
 		line++;
 	}

@@ -45,7 +45,7 @@ It is grown one piece at a time: only things that were actually missed while usi
   - `/mode look|plan|do`, `/allow push|pr|issue|deploy|api`, `/revoke <grant>|all`, `/mandate`
 - `extensions/secrets/` — keeps secrets out of the AI's context and out of what leaves the machine
   - Tokens, keys, and private keys in tool output are replaced with `[redacted <kind>]` before the AI sees them
-  - Before `git commit`, `git push`, and `gh pr create`, the added lines are scanned for secrets, `.env` and key files, paths under your home directory, and your git email. In test files and fixtures, `password = "..."` style values count as made up; only real key shapes are reported there. Extra private words go in `terms.local.json` (gitignored). `/secrets` shows what is checked
+  - Before `git commit`, `git push`, and `gh pr create`, the added lines are scanned for secrets, `.env` and key files, paths under your home directory, and your git email. A `password = "..."` value made only of lowercase words (such as `private-password` in a test) counts as made up. Extra private words go in `terms.local.json` (gitignored). `/secrets` shows what is checked
 
 ### Review
 

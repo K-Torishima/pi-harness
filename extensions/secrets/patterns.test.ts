@@ -42,13 +42,14 @@ test("scanDiff ignores removed lines and placeholders", () => {
 	assert.equal(scanDiff(diff("a.ts", ["pass", 'word = "hunter2-but-longer"'].join(""))).length, 1);
 });
 
-test("test files may hold made-up passwords, but not real key shapes", () => {
-	const made = ['pass', 'word: "private-password"'].join("");
-	for (const file of ["src/a/__tests__/monitoring.test.ts", "src/a.spec.tsx", "test/helpers.ts", "fixtures/login.json"]) {
-		assert.deepEqual(scanDiff(diff(file, made)), [], file);
+test("made-up lowercase words are not secrets, wherever they are; generated values still are", () => {
+	const key = ["pass", "word"].join("");
+	for (const file of ["src/__tests__/monitoring.test.ts", "auth/login_test.go", "src/login.ts"]) {
+		assert.deepEqual(scanDiff(diff(file, `${key}: "private-password"`, `${key} := "supersecretvalue"`)), [], file);
 	}
-	assert.equal(scanDiff(diff("src/login.ts", made)).length, 1, "outside tests it still counts");
-	assert.equal(scanDiff(diff("src/a/__tests__/x.test.ts", `const t = "${FAKE.github}";`))[0].what, "GitHub token");
+	for (const value of ["Rl9s8dkQ2pZx", "a8f3c9e1b2d4f6a7", "Correct-Horse-Battery"]) {
+		assert.equal(scanDiff(diff("config/database.test.yml", `${key}: "${value}"`)).length, 1, value);
+	}
 });
 
 test("scanDiff catches personal details", () => {
