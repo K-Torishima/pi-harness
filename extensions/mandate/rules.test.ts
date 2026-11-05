@@ -144,7 +144,7 @@ test("blamesMode spots a reply that held back because of the mode", () => {
 
 test("git plumbing that only reads is read; git tag <name> is a change", () => {
 	for (const c of ["git merge-base HEAD main", "git merge-tree --write-tree HEAD main", "git tag -l", "git tag --list 'v*'"]) assert.equal(classifyCommand(c).kind, "read", c);
-	for (const c of ["git merge main", "git merge-file a b c", "git tag v1.0", "git stash", "git branch -D x"]) assert.equal(classifyCommand(c).kind, "local", c);
+	for (const c of ["git merge main", "git merge-file a b c", "git commit-tree HEAD^{tree} -m x", "git commit-graph write", "git tag v1.0", "git stash", "git branch -D x"]) assert.equal(classifyCommand(c).kind, "local", c);
 });
 
 test("asksOutward spots a closing question about an outward action", () => {
@@ -154,4 +154,6 @@ test("asksOutward spots a closing question about an outward action", () => {
 	assert.ok(asksOutward("Shall I open the PR and merge it?"));
 	assert.ok(!asksOutward("修正しました。次にテストを追加してよいですか？"));
 	assert.ok(!asksOutward("本番の設定を読みました。次にテストを追加してよいですか？"), "only the question counts");
+	for (const local of ["閉じ括弧を追加してよいですか？", "送信処理のバグを直してよいですか？", "公開APIの型を直してよいですか？", "mainにマージされた変更を読みました、次にテストを追加してよいですか？"])
+		assert.ok(!asksOutward(local), local);
 });

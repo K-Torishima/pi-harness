@@ -59,6 +59,8 @@ test("denials are not claims, and closing questions are not fact questions", () 
 	assert.equal(claimsItWorks("1件は通りませんでしたが、直した後はテストが通りました。")?.kind, "passes", "a later affirmation still counts");
 	assert.equal(claimsItWorks("テストが通ったことを確認しました。")?.kind, "passes", "confirming is not denying");
 	assert.equal(claimsItWorks("テストが通り、問題ありません。")?.kind, "passes");
+	assert.equal(claimsItWorks("テストが通ることを確認し、問題ないです。")?.kind, "passes", "a later ない in another clause is not a denial");
+	assert.equal(claimsItWorks("ビルドが成功したことを確認。問題ない状態です。")?.kind, "passes");
 	assert.ok(!asksForFact("設定ファイルのパスを確認しました。次に進めますか？"), "the path sentence is not the question");
 	assert.ok(!asksForFact("他に質問はありますか？"));
 	assert.ok(!asksForFact("A と B、どれがいいですか？"));
@@ -142,6 +144,22 @@ test("a check carries over to the next request until the next change; a fact que
 	await m.fire("input", { text: "もう一か所直して", source: "interactive" });
 	await m.ran("edit", { path: "b.ts" });
 	assert.equal((await m.settle("直して、テストも通りました。"))?.continue, true, "a later change needs a new run");
+});
+
+test("a look in an earlier request does not back a 'works' claim; a change made with ! undoes an earlier run", async () => {
+	const m = await setup();
+	await m.ran("edit", { path: "a.ts" });
+	await m.fire("input", { text: "README を読んで", source: "interactive" });
+	await m.ran("read", { path: "README.md" });
+	await m.fire("input", { text: "動く？", source: "interactive" });
+	assert.equal((await m.settle("動作確認しました。"))?.continue, true);
+
+	const u = await setup();
+	await u.ran("edit", { path: "a.ts" });
+	await u.ran("bash", { command: "make test" });
+	await u.fire("user_bash", { command: "git stash pop", excludeFromContext: false, cwd: "/x" });
+	await u.fire("input", { text: "テスト通った？", source: "interactive" });
+	assert.equal((await u.settle("テストは通っています。"))?.continue, true);
 });
 
 test("a new session starts an empty tally", async () => {

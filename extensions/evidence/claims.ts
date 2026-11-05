@@ -4,7 +4,7 @@
  */
 
 import { commandText, segments } from "../lib/shell.ts";
-import { changesCodeSegment, classifyCommand, localChanges } from "../mandate/rules.ts";
+import { changesCodeSegment, classifyCommand, lastSentences, localChanges } from "../mandate/rules.ts";
 
 export type Step = "look" | "change" | "verify";
 
@@ -40,7 +40,7 @@ const WORKS = /動作確認(?:済|しました|できました|が取れ)|検証
 
 // "通りませんでした", "通らない", "成功しなかった": the claim is denied right after it.
 // "テスト成功を意味しません", "通ることは確認していません": it is named only to say it is not shown
-const DENIED_AFTER = /^\S{0,3}?(?:ませ|ない|なかっ|ず[、。]|ずに)|^(?:る|った|した|する)?(?:こと|か|と)?[をはがも]?(?:意味|保証|確認|検証|限)\S{0,4}?(?:ませ|ない|なかっ)/;
+const DENIED_AFTER = /^\S{0,3}?(?:ませ|ない|なかっ|ず[、。]|ずに)|^(?:る|った|した|する)?(?:こと|か|と)?[をはがも]?(?:意味|保証|確認|検証|限)[^\s、。,.!！?？]{0,4}?(?:ませ|ない|なかっ)/;
 // "not verified", "haven't verified", "tests don't pass": the claim is denied right before it
 const DENIED_BEFORE = /\b(?:not|never|no|n't|un)\s*(?:yet\s+|been\s+|all\s+)?$/i;
 
@@ -71,18 +71,12 @@ const ASKS = /[?？]\s*$|(?:教えて|共有して|送って|貼って)(?:くだ
 
 /** Does one of the last sentences of the reply ask the user for a fact? Each sentence is judged on its own */
 export function asksForFact(reply: string): boolean {
-	const sentences = reply
-		.trim()
-		.slice(-300)
-		.split(/(?<=[。！!？?])|\n/)
-		.map((s) => s.trim())
-		.filter(Boolean);
-	return sentences.some((s) => ASKS.test(s) && ASKS_FACT.test(s));
+	return lastSentences(reply).some((s) => ASKS.test(s) && ASKS_FACT.test(s));
 }
 
 /**
- * Steps are numbered across the whole session: a check stays valid until the next change, even when a later request
- * asks about it ("did the tests pass?"). requestStart is the last step before the current request
+ * Steps are numbered across the session (until pi restarts or reloads): a run stays valid until the next change, even when
+ * a later request asks about it ("did the tests pass?"). requestStart is the last step before the current request
  */
 export type Ledger = { seq: number; lastLook: number; lastChange: number; lastVerify: number; requestStart: number };
 
@@ -105,8 +99,10 @@ export function checkClaims(reply: string, ledger: Ledger): string[] {
 	const problems: string[] = [];
 	const claim = claimsItWorks(reply);
 	if (claim) {
-		// The latest step that can back the claim: a run for "passes", a run or a look for "works"
-		const backing = claim.kind === "passes" ? ledger.lastVerify : Math.max(ledger.lastVerify, ledger.lastLook);
+		// The latest step that can back the claim: a run for "passes", a run or a look for "works".
+		// A look counts only in this request: an earlier one was about something else
+		const look = ledger.lastLook > ledger.requestStart ? ledger.lastLook : 0;
+		const backing = claim.kind === "passes" ? ledger.lastVerify : Math.max(ledger.lastVerify, look);
 		if (backing === 0 || backing < ledger.lastChange) {
 			const what = claim.kind === "passes" ? "the test or build" : "the command, or a look at the result,";
 			problems.push(

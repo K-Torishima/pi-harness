@@ -6,7 +6,8 @@
  * - it says tests pass or that something works, but nothing was run to check it after the last change
  * - it asks the user for a fact (where, which, the URL, the path) without having looked anything up in this request
  *
- * A check stays valid until the next change, so answering "did the tests pass?" in a later request is fine. /evidence shows the tally.
+ * A run stays valid until the next change (including one made with !), so answering "did the tests pass?" in a later request
+ * is fine. The tally lives until pi restarts or reloads. /evidence shows it.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -33,6 +34,13 @@ export default function (pi: ExtensionAPI) {
 	pi.on("message_start", async (event) => {
 		const m = event.message as { role?: string; customType?: string };
 		if (m.role === "custom" && m.customType === "goal") sentBack = false;
+	});
+
+	// A change the user makes with ! or !! counts too: an earlier run no longer backs a claim after it.
+	// Edits in the user's own editor cannot be seen
+	pi.on("user_bash", async (event) => {
+		if (stepsOf("bash", { command: event.command }).includes("change")) record(ledger, "change");
+		return undefined;
 	});
 
 	// Count what actually ran; a failed or blocked call proves nothing

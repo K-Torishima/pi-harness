@@ -179,7 +179,7 @@ export default function (pi: ExtensionAPI) {
 	// Send a reply back once when it stops short:
 	// - in do, it ends by asking permission for something inside the request
 	// - in the default look (not a look or plan the user chose), it ends by asking permission or by blaming the mode.
-//   Asking before an outward action (closing an issue, pushing) is the user's call, so that question stays
+	//   Asking before an outward action (closing an issue, pushing) is the user's call, so that question stays
 	pi.on("agent_before_settle", async (event) => {
 		if (nudged || blocked) return undefined;
 		if (event.outcome === "aborted" || event.outcome === "error" || event.continue) return undefined;

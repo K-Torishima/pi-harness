@@ -46,7 +46,7 @@ const LOCAL: { label: string; re: RegExp }[] = [
 		label: "git (write)",
 		// (?![\w-]) and not \b, so git merge-base and git merge-tree (read only) are not read as git merge
 		re: new RegExp(
-			`${LEAD}${GIT}(?:(?:add|commit|merge-file|checkout-index|merge|rebase|reset|checkout|switch|apply|am|cherry-pick|revert|pull|clean|restore|rm|mv|init|clone)(?![\\w-])|stash(?:\\s+(?:push|pop|apply|drop|clear|save)|\\s*$)|tag\\s+(?!-l\\b|--list\\b)\\S|branch\\s+-[dDmMcC]|worktree\\s+(?:add|remove|move|prune)\\b)`,
+			`${LEAD}${GIT}(?:(?:add|commit|commit-tree|commit-graph|merge-file|merge-index|merge-one-file|checkout-index|merge|rebase|reset|checkout|switch|apply|am|cherry-pick|revert|pull|clean|restore|rm|mv|init|init-db|clone)(?![\\w-])|stash(?:\\s+(?:push|pop|apply|drop|clear|save)|\\s*$)|tag\\s+(?!-l\\b|--list\\b)\\S|branch\\s+-[dDmMcC]|worktree\\s+(?:add|remove|move|prune)\\b)`,
 		),
 	},
 	{ label: "package install", re: new RegExp(`${LEAD}(?:(?:npm|pnpm|yarn|bun)\\s+(?:i|install|add|remove|rm|uninstall|update|upgrade|link|ci)|pip3?\\s+install|brew\\s+(?:install|uninstall|upgrade|remove|reinstall))\\b`) },
@@ -164,13 +164,19 @@ const MODE_NAME = /\b(?:look|plan)\s*(?:mode|モード)|[（(](?:look|plan)[）)
 // ... and saying it held back because of it
 const HELD_BACK = /変更(?:して|は|を)?(?:いません|しません|しませんでした|していない)|変更できません|触って(?:いません|いない)|(?:did not|didn't|won't|will not|can't|cannot) (?:change|edit|modify|touch)|no (?:changes|files) (?:were )?(?:made|changed)|になったら|を受けたら|があれば/i;
 
-/** Does the end of the reply say it did not act because of the mode? Both must be in the same sentence */
-export function blamesMode(reply: string): boolean {
+/** The sentences at the end of a reply (its last 300 characters), split after 。！？ and at line breaks */
+export function lastSentences(reply: string): string[] {
 	return reply
 		.trim()
 		.slice(-300)
 		.split(/(?<=[。！!？?])|\n/)
-		.some((s) => MODE_NAME.test(s) && HELD_BACK.test(s));
+		.map((s) => s.trim())
+		.filter(Boolean);
+}
+
+/** Does the end of the reply say it did not act because of the mode? Both must be in the same sentence */
+export function blamesMode(reply: string): boolean {
+	return lastSentences(reply).some((s) => MODE_NAME.test(s) && HELD_BACK.test(s));
 }
 
 /** Does the end of a reply ask the user for permission to go on? */
@@ -179,17 +185,15 @@ export function asksPermission(reply: string): boolean {
 	return ASKS.some((re) => re.test(tail));
 }
 
-// Actions that reach outside, named in a question: closing an issue, pushing, merging, deploying, publishing
+// Outward actions named as something to do: closing an issue, pushing, merging, deploying, publishing.
+// Verb forms only, so local work that mentions these words (閉じ括弧, 送信処理, 公開API, マージされた変更) does not count
 const OUTWARD_WORDS =
-	/クローズ|閉じ|プッシュ|マージ|デプロイ|本番|リリース|公開|送信|投稿|コメントし|(?:PR|イシュー|issue)を?(?:作|立て|出)|\b(?:close|push|merge|deploy|release|publish|post|send)\b/i;
+	/(?:イシュー|issue|PR|プルリク)[^。？?]{0,20}(?:閉じ|クローズ)|(?:閉じ|クローズし)[^。？?]{0,20}(?:イシュー|issue|PR)|として(?:閉じ|クローズ)|クローズし|プッシュ|\bpush\b|マージし|デプロイ|本番(?:に|へ)|リリースし|公開し|送信し|投稿し|コメントし|(?:PR|イシュー|issue)を?(?:作|立て|出)|\b(?:close|merge|deploy|release|publish)\b/i;
 
 /** Does the last question of the reply ask about an outward action? That is the user's call even in look mode */
 export function asksOutward(reply: string): boolean {
-	const question = reply
-		.trim()
-		.slice(-300)
-		.split(/(?<=[。！!？?])|\n/)
-		.filter((s) => /[？?]\s*$/.test(s.trim()) || ASKS.some((re) => re.test(s)))
+	const question = lastSentences(reply)
+		.filter((s) => /[？?]$/.test(s) || ASKS.some((re) => re.test(s)))
 		.at(-1);
 	return question !== undefined && OUTWARD_WORDS.test(question);
 }
