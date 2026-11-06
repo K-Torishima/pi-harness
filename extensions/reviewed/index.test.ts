@@ -7,7 +7,7 @@ import { loadExtension } from "../../test/load-extension.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
-const REPORTS: Record<string, string> = { review: "Verdict: ready to merge", security: "**Security:** no issues found" };
+const REPORTS: Record<string, string> = { simplify: "Simplified: 1 edit, tests pass", review: "Verdict: ready to merge", security: "**Security:** no issues found" };
 
 async function setup() {
 	const m = await loadExtension(join(HERE, "index.ts"), HERE);
@@ -133,12 +133,25 @@ test("/skill:security-notes is another skill", async () => {
 	assert.equal((await m.pr())?.block, true);
 });
 
-test("polish counts through the skills it reads, even by a relative path", async () => {
+test("polish: simplify's own edits do not ask for another simplify", async () => {
+	// A session that starts on already-committed work: the first change is simplify's own edit
 	const m = await setup();
-	await m.edit();
 	await m.readsOnly("polish/../simplify");
+	await m.edit();
 	await m.readsOnly("polish/../review");
-	await m.says("Verdict: ready to merge");
+	await m.says("Verdict: ready to merge\n1. nothing\nSimplified: 1 edit, tests pass");
 	await m.types("/skill:security");
 	assert.equal(await m.pr(), undefined);
+});
+
+test("skill files count by any path the read tool accepts", async () => {
+	for (const path of ["@skills/polish/../review/SKILL.md", "skills/review/SKILL.md", "/x/pi-harness/skills/polish/../review/SKILL.md"]) {
+		const m = await setup();
+		await m.edit();
+		await m.loads("simplify");
+		await m.fire("tool_result", { toolName: "read", input: { path }, isError: false, content: [] });
+		await m.says("Verdict: ready to merge");
+		await m.types("/skill:security");
+		assert.equal(await m.pr(), undefined, path);
+	}
 });
