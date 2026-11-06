@@ -20,15 +20,17 @@ async function setup() {
 	};
 }
 
-test("a PR is blocked until simplify and then review have run", async () => {
+test("a PR is blocked until simplify, review, and security have run", async () => {
 	const m = await setup();
 	await m.edit();
 	const r = await m.pr();
 	assert.equal(r?.block, true);
-	assert.match(String(r?.reason), /simplify .*then review/);
+	assert.match(String(r?.reason), /simplify .*then review .*then security/);
 	await m.loads("simplify");
 	assert.match(String((await m.pr())?.reason), /review/);
 	await m.loads("review");
+	assert.match(String((await m.pr())?.reason), /security \(read skills\/security\/SKILL\.md/);
+	await m.types("/skill:security");
 	assert.equal(await m.pr(), undefined);
 });
 
@@ -37,11 +39,14 @@ test("a change after the review needs another review, but not another simplify",
 	await m.edit();
 	await m.types("/skill:simplify");
 	await m.types("/skill:review src");
+	await m.types("/skill:security");
 	await m.edit();
 	const r = await m.pr();
 	assert.equal(r?.block, true);
 	assert.doesNotMatch(String(r?.reason), /simplify/);
+	assert.match(String(r?.reason), /review .*security/);
 	await m.loads("review");
+	await m.loads("security");
 	assert.equal(await m.pr(), undefined);
 });
 
@@ -67,6 +72,7 @@ test("git commits and failed edits are not changes; other commands pass", async 
 	const m = await setup();
 	await m.loads("simplify");
 	await m.loads("review");
+	await m.loads("security");
 	await m.fire("tool_result", { toolName: "bash", input: { command: "git add -A && git commit -m x" }, isError: false, content: [] });
 	await m.fire("tool_result", { toolName: "edit", input: { path: "a.ts" }, isError: true, content: [] });
 	assert.equal(await m.pr(), undefined);
@@ -88,5 +94,5 @@ test("/reviewed says what is missing", async () => {
 	const m = await setup();
 	await m.edit();
 	await m.command("reviewed", "");
-	assert.match(m.notes.at(-1) ?? "", /Before a PR: simplify .*review/);
+	assert.match(m.notes.at(-1) ?? "", /Before a PR: simplify .*review .*security/);
 });
