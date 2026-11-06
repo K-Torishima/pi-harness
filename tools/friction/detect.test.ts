@@ -74,6 +74,8 @@ test("pasted text and neutral questions are not pushback", () => {
 	const pasted = `エラーが出た\n${"x".repeat(200)}\n期待値と違う`;
 	assert.deepEqual(kinds([header(), user(pasted), user("このループ何回回る？")]), []);
 	assert.deepEqual(kinds([header(), user("何回も言ってるけど")]), ["pushback"]);
+	assert.deepEqual(kinds([header(), user("warpとかOrcaなどのエディタと体験が明らかに違うものとかありますか？"), user("勝手に調べていいよ")]), [], "a difference, and a go-ahead");
+	assert.deepEqual(kinds([header(), user("勝手にコミットしないで")]), ["pushback"]);
 });
 
 test("the /goal kickoff is not a user turn and never counts as asked again", () => {

@@ -22,6 +22,12 @@ export type SessionReport = { cwd: string; userTurns: number; incidents: Inciden
 /** The user says the agent got it wrong, did not listen, or did something not asked for */
 const PUSHBACK =
 	/違う|ちがう|そうじゃな|そういうことじゃな|そこじゃな|通じてな|話が通じ|聞いてな|読んでな|言ったよね|言ったじゃん|さっき(?:も)?言|何回(?:も|言)|何度も|頼んでな|勝手に|余計な|って言った(?:よね|じゃん|のに)|\bnot what I\b|\bI (?:said|asked)\b|\bthat'?s wrong\b/i;
+/**
+ * Words PUSHBACK matches that are not pushback: "違う" describing a difference ("体験が明らかに違うものとか"),
+ * and "勝手に" giving permission ("勝手に調べていいよ")
+ */
+const NOT_PUSHBACK = /違う(?:もの|こと|点|ところ|とか|部分|の[か？?])|勝手に[^。！!？?]{0,12}(?:ていい|て良い|てOK|てok|てください|どうぞ)/gi;
+const isPushback = (text: string) => PUSHBACK.test(text.replace(NOT_PUSHBACK, ""));
 /** A short question about where the work is: the agent did not make its state visible */
 const STATUS = /どこまで|進捗|(?:終わ|おわ)って(?:る|ます)[？?]|(?:した|できた|やった|終わった|直した|入れた)[？?]\s*$/;
 const STATUS_MAX = 40;
@@ -125,7 +131,7 @@ export function readSession(lines: string[], since = ""): SessionReport {
 		}
 		const before = lastAssistant || undefined;
 		const typed = text.length <= TYPED_MAX;
-		if (typed && PUSHBACK.test(text)) add({ kind: "pushback", time, text: short, before });
+		if (typed && isPushback(text)) add({ kind: "pushback", time, text: short, before });
 		else if (text.length <= STATUS_MAX && STATUS.test(text)) add({ kind: "status-check", time, text: short, before });
 		else if (typed && text.length >= ASKED_MIN && recentUser.some((u) => similarity(u, text) >= SAME)) add({ kind: "asked-again", time, text: short, before });
 		recentUser.push(text);

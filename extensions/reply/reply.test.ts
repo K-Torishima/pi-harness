@@ -35,6 +35,10 @@ test("issue numbers need a title or link", () => {
 	assert.deepEqual(checkReply("#39「Checks 読取権限の追加」は管理者待ちです。", JA), []);
 	assert.deepEqual(checkReply("[#39](https://github.com/o/r/issues/39) は管理者待ちです。", JA), []);
 	assert.deepEqual(checkReply("#39 (Checks 権限) は管理者待ちです。", JA), []);
+	assert.deepEqual(checkReply("起動方法整理 #157 と クラウドAI検証 #156 はクローズ済みです。", JA), [], "a title before the number");
+	assert.match(checkReply("未完了は #43 です。", JA).join(), /#43 by number only/, "a particle is not a title");
+	assert.deepEqual(checkReply("構成は、親Issue #1〜#9と、作業Issue #10〜#54です。", JA), [], "a range");
+	assert.deepEqual(checkReply("#345 は完了しました。", "design-system の #345 を進めてください。"), [], "the user wrote it");
 	assert.deepEqual(checkReply("https://github.com/o/r/pull/12 の #12 はマージ済みです。", JA), []);
 	assert.deepEqual(checkReply("色は #fff にしました。見出しは ## です。", JA), []);
 	assert.deepEqual(checkReply("背景色は #333 に変えました。", JA), [], "a color made of digits");
@@ -62,7 +66,7 @@ test("helpers", () => {
 	assert.ok(!asksForDetail("どう？"));
 });
 
-async function setup(reply: string, user = JA) {
+async function setup(reply: string, user = JA, earlier: string[] = []) {
 	const m = await loadExtension(join(HERE, "index.ts"), HERE);
 	m.entries.push({ type: "message", message: { role: "user", content: user } });
 	await m.fire("input", { text: user, source: "interactive" });
@@ -78,10 +82,21 @@ async function setup(reply: string, user = JA) {
 					{ sourceEntry: { id: "u1", type: "message" }, messages: [{ role: "user", content: user }] },
 					{ sourceEntry: { id: "a1", type: "message" }, messages: [{ role: "assistant", content: [{ type: "text", text: reply }] }] },
 				],
+				contextMessages: [
+					...earlier.map((text) => ({ role: "assistant", content: [{ type: "text", text }] })),
+					{ role: "user", content: user },
+					{ role: "assistant", content: [{ type: "text", text: reply }] },
+				],
 			},
 		});
 	return { ...m, settle };
 }
+
+test("a #number explained in an earlier reply is not sent back again", async () => {
+	const linked = "[#43](https://github.com/o/r/issues/43) Crashlytics取得失敗は未解決です。";
+	assert.equal(await (await setup("#43を調べた結果、まだ未解決です。", JA, [linked])).settle(), undefined);
+	assert.equal((await (await setup("#43を調べた結果、まだ未解決です。")).settle())?.continue, true, "without the earlier reply it is bare");
+});
 
 test("a reply with problems is sent back once, with the first version dropped from context", async () => {
 	const m = await setup("I checked #39 and it is waiting on an admin to grant the permission.");
