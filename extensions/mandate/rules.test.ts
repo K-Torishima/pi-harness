@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { asksOutward, asksPermission, blamesMode, classifyCommand, classifyTool, localChanges, quoteMatches } from "./rules.ts";
+import { asksOutward, asksPermission, outwardAsks, blamesMode, classifyCommand, classifyTool, localChanges, quoteMatches } from "./rules.ts";
 
 test("localChanges lists every changing part of a command, not just the first", () => {
 	assert.deepEqual(
@@ -156,4 +156,15 @@ test("asksOutward spots a closing question about an outward action", () => {
 	assert.ok(!asksOutward("本番の設定を読みました。次にテストを追加してよいですか？"), "only the question counts");
 	for (const local of ["閉じ括弧を追加してよいですか？", "送信処理のバグを直してよいですか？", "公開APIの型を直してよいですか？", "mainにマージされた変更を読みました、次にテストを追加してよいですか？"])
 		assert.ok(!asksOutward(local), local);
+});
+
+test("outwardAsks names the grant each outward question needs", () => {
+	assert.deepEqual(outwardAsks("修正をGitHubへpushし、会社Macへ配備してよいですか？"), ["push", "deploy"]);
+	assert.deepEqual(outwardAsks("カレンダーの読み取り権限を追加する認証を進めてよいですか？"), ["user"]);
+	assert.deepEqual(outwardAsks("この session に Notion 接続を追加してよいですか？"), ["user"]);
+	assert.deepEqual(outwardAsks("認証処理のテストを追加してよいですか？"), [], "local work on auth code");
+	assert.deepEqual(outwardAsks("PRをクローズしてよいですか？"), ["pr"], "gh pr close is under pr");
+	assert.deepEqual(outwardAsks("イシューにコメントしてよいですか？"), ["issue"]);
+	assert.deepEqual(outwardAsks("この件でイシューを出してよいですか？"), ["issue"]);
+	assert.deepEqual(outwardAsks("スクリプトに実行権限を追加してよいですか？"), [], "chmod is local");
 });

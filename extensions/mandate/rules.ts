@@ -185,15 +185,32 @@ export function asksPermission(reply: string): boolean {
 	return ASKS.some((re) => re.test(tail));
 }
 
-// Outward actions named as something to do: closing an issue, pushing, merging, deploying, publishing.
-// Verb forms only, so local work that mentions these words (閉じ括弧, 送信処理, 公開API, マージされた変更) does not count
-const OUTWARD_WORDS =
-	/(?:イシュー|issue|PR|プルリク)[^。？?]{0,20}(?:閉じ|クローズ)|(?:閉じ|クローズし)[^。？?]{0,20}(?:イシュー|issue|PR)|として(?:閉じ|クローズ)|クローズし|プッシュ|\bpush\b|マージし|デプロイ|本番(?:に|へ)|リリースし|公開し|送信し|投稿し|コメントし|(?:PR|イシュー|issue)を?(?:作|立て|出)|\b(?:close|merge|deploy|release|publish)\b/i;
+// Outward actions named as something to do, by the grant that covers them. "user" is one no grant covers: signing in,
+// giving permissions, connecting a service, sending a message. Verb forms only, so local work that mentions these words
+// (閉じ括弧, 送信処理, 公開API, マージされた変更, 認証処理) does not count
+const OUTWARD_ASKS: { grant: Grant | "user"; re: RegExp }[] = [
+	{ grant: "push", re: /プッシュ|\bpush\b/i },
+	// Closing or commenting on a PR is gh pr, under the pr grant, as the tool layer classifies it
+	{
+		grant: "pr",
+		re: /マージし|(?:PR|プルリク)を?(?:作|立て|出)|(?:PR|プルリク)[^。？?]{0,20}(?:閉じ|クローズ|コメント)|(?:閉じ|クローズし|コメントし)[^。？?]{0,20}(?:PR|プルリク)|\bmerge\b/i,
+	},
+	{
+		grant: "issue",
+		re: /(?:イシュー|issue)[^。？?]{0,20}(?:閉じ|クローズ|コメント)|(?:閉じ|クローズし|コメントし)[^。？?]{0,20}(?:イシュー|issue)|として(?:閉じ|クローズ)|(?:イシュー|issue)を?(?:作|立て|出)|\bclose\b/i,
+	},
+	{ grant: "deploy", re: /デプロイ|配備し|本番(?:に|へ)|リリースし|公開し|\b(?:deploy|release|publish)\b/i },
+	// Not 実行権限 (chmod on a file is local work)
+	{ grant: "user", re: /認証(?:し|を(?:進め|通|追加))|ログインし|(?<!実行)権限を(?:追加|付与|与え)|接続を追加|送信し|投稿し|\b(?:sign in|log in|authori[sz]e)\b/i },
+];
 
-/** Does the last question of the reply ask about an outward action? That is the user's call even in look mode */
-export function asksOutward(reply: string): boolean {
+/** The outward actions the last question of the reply asks about, by the grant that covers them */
+export function outwardAsks(reply: string): (Grant | "user")[] {
 	const question = lastSentences(reply)
 		.filter((s) => /[？?]$/.test(s) || ASKS.some((re) => re.test(s)))
 		.at(-1);
-	return question !== undefined && OUTWARD_WORDS.test(question);
+	return question === undefined ? [] : OUTWARD_ASKS.filter(({ re }) => re.test(question)).map(({ grant }) => grant);
 }
+
+/** Does the last question of the reply ask about an outward action? That is the user's call even in look mode */
+export const asksOutward = (reply: string): boolean => outwardAsks(reply).length > 0;

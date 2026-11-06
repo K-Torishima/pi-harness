@@ -38,21 +38,58 @@ const PREAMBLE = /^(?:確認しました[。、！!]|承知しました|了解�
 // Words that make a #123 on the same line a color, not an issue
 const COLOR = /色|カラー|colou?r|background|fill|stroke|border|rgb|hex|css|theme/i;
 
-/** Issue or PR numbers mentioned without saying what they are */
-function bareRefs(text: string): string[] {
-	const out: string[] = [];
-	for (const m of text.matchAll(/(?<![\w/[#&])#(\d+)\b/g)) {
+const REF = /(?<![\w/[#&])#(\d+)\b/g;
+/**
+ * A Japanese title right before the number ("起動方法整理 #157", "Crashlytics取得失敗 #43"). Not a particle ("未完了は #43"),
+ * a verb ("調査した #43"), a pointer ("この"), or a word that only names the kind of thing ("関連バグ #43").
+ * English puts verbs there ("I checked #39"), so only words with kanji or katakana count
+ */
+function titleBefore(text: string): boolean {
+	const word = text.match(/([\p{L}\p{N}]+)\s?$/u)?.[1] ?? "";
+	return (
+		word.length >= 3 &&
+		/[\p{Script=Han}\p{Script=Katakana}]/u.test(word) &&
+		!/[のとはがをにでもへやたてるだしすい]$/.test(word) &&
+		!/^(?:この|その|あの|同じ|別の)/.test(word) &&
+		!GENERIC.test(word)
+	);
+}
+// "#1〜#9", "#117-#122": a range, named by the words around it ("親Issue #1〜#9")
+const RANGE = /^\s?[〜~～\-–]\s?#\d|\d\s?[〜~～\-–]\s?$/;
+// Generic words that only say what kind of thing it is, not which one ("関連バグ #43", "親Issue #9")
+const GENERIC = /(?:バグ|不具合|課題|タスク|チケット|イシュー|プルリク|件|対応|修正|Issue|issue|PR)$/;
+
+/** Every #number the text mentions, and the ones it explains (with a link or a title right after) */
+function refsIn(text: string): { all: string[]; explained: Set<string> } {
+	const all: string[] = [];
+	const explained = new Set<string>();
+	for (const m of text.matchAll(REF)) {
 		const n = m[1];
+		const at = m.index ?? 0;
 		// #333 or #000000 next to a word about color is a color
-		const line = text.slice(text.lastIndexOf("\n", m.index) + 1, text.indexOf("\n", m.index) === -1 ? undefined : text.indexOf("\n", m.index));
+		const line = text.slice(text.lastIndexOf("\n", at) + 1, text.indexOf("\n", at) === -1 ? undefined : text.indexOf("\n", at));
 		if ([3, 4, 6, 8].includes(n.length) && COLOR.test(line)) continue;
-		const before = text.slice(Math.max(0, (m.index ?? 0) - 1), m.index);
-		const after = text.slice((m.index ?? 0) + m[0].length, (m.index ?? 0) + m[0].length + 3);
-		const linked = before === "[" || new RegExp(`/(?:issues|pull)/${n}\\b`).test(text);
-		const titled = /^(?:「|（|\s?\(|:\s?\S|：|\s[—–-]\s)/.test(after);
-		if (!linked && !titled && !out.includes(`#${n}`)) out.push(`#${n}`);
+		const before = text.slice(Math.max(0, at - 6), at);
+		const after = text.slice(at + m[0].length, at + m[0].length + 6);
+		const linked = before.endsWith("[");
+		const titled = /^(?:「|（|\s?\(|:\s?\S|：|\s[—–-]\s)/.test(after) || titleBefore(text.slice(Math.max(0, at - 16), at));
+		if (linked || titled || RANGE.test(after) || RANGE.test(before)) explained.add(n);
+		if (!all.includes(n)) all.push(n);
 	}
-	return out;
+	// A link to it, such as [#43](…/issues/43)
+	for (const m of text.matchAll(/\/(?:issues|pull)\/(\d+)\b/g)) explained.add(m[1]);
+	return { all, explained };
+}
+
+/**
+ * Issue or PR numbers mentioned without saying what they are. A number counts as explained when the reply explains it
+ * anywhere, when it is part of a range, when the user wrote it, or when an earlier reply explained it
+ */
+function bareRefs(text: string, userText: string, earlier: string): string[] {
+	const { all, explained } = refsIn(text);
+	// Code blocks and logs in earlier replies did not explain anything to the user
+	const known = new Set([...refsIn(userText).all, ...refsIn(withoutCode(earlier)).explained]);
+	return all.filter((n) => !explained.has(n) && !known.has(n)).map((n) => `#${n}`);
 }
 
 /** "A or B?" style choices whose letters are never spelled out */
@@ -64,8 +101,11 @@ function bareOptions(text: string): boolean {
 	return mentions && !defined;
 }
 
-/** What is wrong with a finished reply, as instructions for rewriting it. Empty when it is fine */
-export function checkReply(reply: string, userText: string): string[] {
+/**
+ * What is wrong with a finished reply, as instructions for rewriting it. Empty when it is fine.
+ * `earlier` is the text of earlier replies in the conversation, where a #number may already have been explained
+ */
+export function checkReply(reply: string, userText: string, earlier = ""): string[] {
 	const problems: string[] = [];
 	const text = reply.trim();
 	if (!text) return problems;
@@ -82,7 +122,7 @@ export function checkReply(reply: string, userText: string): string[] {
 			);
 		}
 	}
-	const refs = bareRefs(prose);
+	const refs = bareRefs(prose, userText, earlier);
 	if (refs.length > 0) problems.push(`It mentions ${refs.join(", ")} by number only. Say what each one is (its title, or a link).`);
 	if (bareOptions(prose)) problems.push("It asks the user to choose between letters (A / B) without saying what each one is. Spell the options out.");
 	const first = prose.split("\n").find((l) => l.trim()) ?? "";

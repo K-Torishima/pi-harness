@@ -185,6 +185,16 @@ test("in the default look, a reply that asks permission instead of raising the m
 	assert.equal((await m.fire("agent_before_settle", settle("改行を足しましょうか？")))?.continue, true);
 });
 
+test("in do, asking before an outward action without its grant is not sent back; with the grant it is", async () => {
+	const m = await setup();
+	await m.userSays("直して配備まで進めて");
+	await m.callTool({ action: "set_mode", mode: "do", quote: "直して配備まで進めて" });
+	const reply = "修正しました。会社Macへ配備してよいですか？";
+	assert.equal(await m.fire("agent_before_settle", settle(reply)), undefined);
+	await m.callTool({ action: "grant", grant: "deploy", quote: "配備まで進めて" });
+	assert.equal((await m.fire("agent_before_settle", settle(reply)))?.continue, true);
+});
+
 test("in the default look, asking before an outward action is not sent back", async () => {
 	const m = await setup();
 	await m.userSays("イシューはクローズした？");

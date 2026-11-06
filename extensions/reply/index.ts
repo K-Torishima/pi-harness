@@ -60,7 +60,13 @@ export default function (pi: ExtensionAPI) {
 		const id = last?.sourceEntry?.id;
 		if (!id) return undefined;
 		const replyText = (last?.messages ?? []).filter((m) => m.role === "assistant").map((m) => textOf(m.content)).join("\n");
-		const problems = checkReply(replyText, typed);
+		// Earlier replies the AI still has in view, where a #number may already have been explained
+		const earlier = (event.context.contextMessages as Msg[])
+			.filter((m) => m.role === "assistant")
+			.slice(-20, -1)
+			.map((m) => textOf(m.content))
+			.join("\n");
+		const problems = checkReply(replyText, typed, earlier);
 		if (problems.length === 0) return undefined;
 
 		sentBack = true;
