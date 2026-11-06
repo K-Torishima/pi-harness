@@ -50,40 +50,38 @@ async function setup() {
 	const m = await loadExtension(join(HERE, "index.ts"), HERE);
 	const tool = m.ext.tools.get("anchor").definition;
 	const call = async (action: string, text: string) => (await tool.execute("id", { action, text }, undefined, undefined, m.ctx)).content[0].text as string;
-	/** The reminder text in a model call made on a one-message conversation */
-	const reminderNow = async () => {
-		const r = await m.fire("context", { messages: [{ role: "user", content: "hi", timestamp: 1 }] });
-		const messages = r?.messages as { role: string; content: string }[];
-		return messages.find((x) => x.role === "custom")?.content ?? "";
-	};
-	const roles = async (convo: { role: string }[]) => ((await m.fire("context", { messages: convo }))?.messages as { role: string }[]).map((x) => x.role);
-	return { ...m, call, reminderNow, roles };
+	/** The reminder written at the start of a request */
+	const reminderNow = async () => String(((await m.fire("before_agent_start", { prompt: "hi" }))?.message as { content?: string })?.content ?? "");
+	const context = async (messages: Record<string, unknown>[]) => (await m.fire("context", { messages }))?.messages as Record<string, unknown>[] | undefined;
+	return { ...m, call, reminderNow, context };
 }
 
-test("the reminder goes right after the latest user message and is not stored", async () => {
+test("the reminder is a hidden message written once at the start of a request", async () => {
 	const m = await setup();
 	await m.call("add_decision", "use webhooks");
-	assert.deepEqual(await m.roles([{ role: "user" }]), ["user", "custom"]);
+	const r = await m.fire("before_agent_start", { prompt: "hi" });
+	assert.deepEqual({ ...(r?.message as object), content: undefined }, { customType: "anchor", content: undefined, display: false });
 	assert.match(await m.reminderNow(), /- use webhooks/);
-	assert.equal(m.appended.filter((a) => a.customType !== "anchor").length, 0, "only state entries are stored");
 });
 
-test("after a tool result the reminder stays before the tool calls, so there is nothing trailing to loop on", async () => {
+test("model calls leave the conversation alone while the reminder is in it, so the prompt cache holds", async () => {
 	const m = await setup();
-	assert.deepEqual(await m.roles([{ role: "user" }, { role: "assistant" }, { role: "user" }, { role: "assistant" }, { role: "toolResult" }]), [
-		"user",
-		"assistant",
-		"user",
-		"custom",
-		"assistant",
-		"toolResult",
-	]);
+	await m.reminderNow();
+	await m.call("set_next", "something new");
+	const convo = [{ role: "user" }, { role: "custom", customType: "anchor", content: "old" }, { role: "assistant" }, { role: "toolResult" }];
+	assert.equal(await m.context(convo), undefined, "a change during the request does not rewrite or move it");
 });
 
-test("in a /goal loop the reminder follows the latest nudge, not the kickoff", async () => {
+test("after compaction removes it, the same reminder comes back right after the summary", async () => {
 	const m = await setup();
-	const convo = [{ role: "user" }, { role: "assistant" }, { role: "toolResult" }, { role: "assistant" }, { role: "custom" }, { role: "assistant" }, { role: "toolResult" }];
-	assert.deepEqual(await m.roles(convo), ["user", "assistant", "toolResult", "assistant", "custom", "custom", "assistant", "toolResult"]);
+	assert.equal(await m.context([{ role: "user" }]), undefined, "nothing before the first request");
+	const text = await m.reminderNow();
+	const after = await m.context([{ role: "compactionSummary" }, { role: "assistant" }, { role: "toolResult" }]);
+	assert.deepEqual(after?.map((x) => x.role), ["compactionSummary", "custom", "assistant", "toolResult"]);
+	assert.equal(after?.[1].content, text);
+	await m.call("add_decision", "later");
+	const again = await m.context([{ role: "compactionSummary" }, { role: "assistant" }]);
+	assert.equal(again?.[1].content, text, "the same text until the next request, so the next call hits the cache too");
 });
 
 test("a typed decision stays flagged until the AI records each kind; an extension message clears it", async () => {

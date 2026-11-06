@@ -5,9 +5,9 @@
  * - Always show "◎ focus" and "▸ next step" above the editor
  * - Set the terminal tab title to the focus (so you can tell sessions apart when switching tabs)
  * AI drift:
- * - Before every model call, not just every request, the AI re-reads the focus, what was decided, what was rejected,
- *   what is still open, and the rules to keep. It is added to each call and never stored, so long runs, /goal loops,
- *   and compaction do not wash it out
+ * - At the start of every request, the AI gets the focus, what was decided, what was rejected, what is still open,
+ *   and the rules to keep, as a hidden message. It is written once and never moved or rewritten, so the prompt cache
+ *   holds across the run. When compaction summarizes it away, the same text comes back right after the summary
  * - When your message looks like it decides or rejects something, the AI is asked to record it
  * - The AI rewrites the "next step" with the anchor tool at the end of every reply
  *
@@ -117,16 +117,26 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
-	// Before every model call, the reminder goes right after the latest user or extension message (a /goal nudge is one).
-	// That keeps it next to what the model is working on, in a long run too. Never after a tool result:
-	// a trailing "before ending your reply, call set_next" there makes the model call set_next again and again.
-	// It is not stored in the session. It only changes when the anchor changes, so most calls keep the prompt cache
+	// The reminder is written once per request, next to the user's message, and stays where it is.
+	// Rewriting or moving it inside the conversation made the provider re-read everything after the system prompt
+	// (about 270 of 1,700 calls in two days), so changes made during a request show up in the next one.
+	// Never after a tool result: a trailing "before ending your reply, call set_next" makes the model call it again and again
+	let written: string | undefined;
+	pi.on("before_agent_start", async () => {
+		written = reminder(state, pending);
+		return { message: { customType: "anchor", content: written, display: false } };
+	});
+
+	// Compaction can summarize the reminder away in a long run. Put the same text back right after the summary,
+	// where it stays until the next compaction
 	pi.on("context", async (event) => {
-		const message = { role: "custom" as const, customType: "anchor", content: reminder(state, pending), display: false, timestamp: Date.now() };
+		if (!written) return undefined;
+		const isAnchor = (m: unknown) => (m as { role?: string; customType?: string }).role === "custom" && (m as { customType?: string }).customType === "anchor";
+		if (event.messages.some(isAnchor)) return undefined;
+		const roles = event.messages.map((m) => (m as { role?: string }).role);
+		const at = Math.max(roles.lastIndexOf("compactionSummary"), roles.lastIndexOf("branchSummary"));
 		const messages = [...event.messages];
-		const roles = messages.map((m) => (m as { role?: string }).role);
-		const at = Math.max(roles.lastIndexOf("user"), roles.lastIndexOf("custom"));
-		messages.splice(at + 1, 0, message as (typeof messages)[number]);
+		messages.splice(at + 1, 0, { role: "custom", customType: "anchor", content: written, display: false, timestamp: 0 } as (typeof messages)[number]);
 		return { messages };
 	});
 
@@ -171,7 +181,7 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("decided", {
-		description: "Record a decision. The AI re-reads it before every model call (/decided <decision>)",
+		description: "Record a decision. The AI gets it with every request from now on (/decided <decision>)",
 		handler: async (args, ctx) => {
 			const text = args.trim();
 			if (!text) return ctx.ui.notify("Write it as /decided <decision>.", "info");

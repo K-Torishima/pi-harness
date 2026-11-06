@@ -1,5 +1,5 @@
 /**
- * Pure parts of anchor: the state, the reminder the AI gets before every model call,
+ * Pure parts of anchor: the state, the reminder the AI gets at the start of every request,
  * and spotting a user message that decides or rejects something. No pi imports, so tests can load it directly.
  */
 
@@ -56,7 +56,7 @@ export function decisionKinds(text: string): Kind[] {
 	return kinds;
 }
 
-/** The reminder put in front of the AI before every model call */
+/** The reminder the AI gets at the start of every request */
 export function reminder(state: Anchor, pending?: { kinds: Kind[]; text: string }): string {
 	const lines = ["[anchor] Re-read this before you act."];
 	lines.push(`Current focus: ${state.focus || "(not set — infer it from the request and, if it is clear, set it with set_focus on the anchor tool)"}`);
