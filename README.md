@@ -67,6 +67,9 @@ It is grown one piece at a time: only things that were actually missed while usi
 
 ### Usage and voice
 
+- `extensions/image/` — the AI can generate an image (or edit one from reference images) with the `image` tool, and it shows inline in the terminal (Warp, Ghostty, kitty, WezTerm, iTerm2)
+  - Runs `codex exec` with codex's image generation, so it uses the ChatGPT subscription. One image takes about a minute
+  - Files are saved under `~/.codex/generated_images/`; ask the AI to copy one into the project
 - `extensions/limits/` — shows how much of the current provider's subscription quota is left, in the footer (e.g. `5h 88% left · wk 66% left`)
   - ChatGPT: asks the Codex CLI app-server (requires a Codex CLI login)
   - Claude: read from response headers
@@ -92,4 +95,4 @@ Pick the `zenkai` theme in pi's `/settings`.
 
 - Voice input: microphone permission for your terminal app (asked on first use)
 - Read-aloud with VOICEVOX: `/Applications/Alora.app` (falls back to macOS `say` without it)
-- Quota for ChatGPT: the `codex` CLI, logged in
+- Quota for ChatGPT and image generation: the `codex` CLI, logged in
