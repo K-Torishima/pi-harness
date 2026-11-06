@@ -68,21 +68,23 @@ test("the reminder is a system prompt section set at the start of each request, 
 	assert.equal(m.ext.handlers.get("context"), undefined, "model calls leave the conversation alone, so the prompt cache holds");
 });
 
-test("a typed decision stays flagged until the AI records each kind; an extension message clears it", async () => {
+test("a typed decision is flagged in the next request's section; an extension message clears it", async () => {
 	const m = await setup();
 	await m.fire("input", { text: "Redis はやめて Postgres にしよう", source: "interactive" });
-	assert.match(await m.reminderNow(), /looks like it decides and rejects/);
-	await m.call("add_rejected", "Redis");
-	assert.match(await m.reminderNow(), /looks like it decides something.*add_decision/);
-	await m.call("add_decision", "Postgres");
-	assert.doesNotMatch(await m.reminderNow(), /looks like it/);
-
+	assert.match(await m.reminderNow(), /looks like it decides and rejects.*record it once/);
 	await m.fire("input", { text: "それでいいよ", source: "interactive" });
 	assert.match(await m.reminderNow(), /looks like it decides/);
 	await m.fire("input", { text: "Goal: ship it", source: "extension" });
 	assert.doesNotMatch(await m.reminderNow(), /looks like it/);
 });
 
+test("a run started by a custom message (a /goal kickoff, a letter) gets the section too", async () => {
+	const m = await setup();
+	await m.call("set_focus", "ship the importer");
+	const systemPromptOptions = { sections: {} as Record<string, string> };
+	await m.fire("before_agent_start", { messageType: "custom", message: { customType: "goal", content: "Goal" }, systemPromptOptions });
+	assert.match(systemPromptOptions.sections.anchor, /Current focus: ship the importer/);
+});
 test("set_next stops after two calls per reply, and each user or /goal message starts a new count", async () => {
 	const m = await setup();
 	await m.call("set_next", "one");
