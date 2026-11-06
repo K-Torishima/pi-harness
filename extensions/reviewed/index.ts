@@ -6,7 +6,8 @@
  *
  * - Counts as a change: a successful edit / write, or any part of a bash command that changes files,
  *   including git commands that bring in code (pull, cherry-pick, stash pop, apply). git add / commit / push / fetch / tag do not count
- * - Counts as a run: /skill:simplify, /skill:review, or /skill:security typed by you, or the AI reading skills/<name>/SKILL.md
+ * - Counts as a run: the skill is loaded (/skill:<name> typed by you, or the AI reading skills/<name>/SKILL.md) and,
+ *   for review and security, its report then starts ("Verdict:" / "Security:"), so reading the file alone opens nothing
  * - gh pr create is blocked unless simplify ran after the first change since the last PR,
  *   and review and security ran after the last change (fixing what they found needs another run)
  *
@@ -14,13 +15,23 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { textOf } from "../lib/request.ts";
 import { commandText } from "../lib/shell.ts";
 import { changesCode } from "../mandate/rules.ts";
 
-type Skill = "simplify" | "review" | "security";
+const SKILLS = ["simplify", "review", "security"] as const;
+type Skill = (typeof SKILLS)[number];
 
-export const SKILL_FILE = /(?:^|\/)skills\/(simplify|review|security)\/SKILL\.md$/;
-const SKILL_COMMAND = /^\/skill:(simplify|review|security)\b/;
+/** The first line of the skill's report. simplify has none: it changes code, and loading it counts */
+const REPORT: Partial<Record<Skill, RegExp>> = {
+	review: /^[\W_]*Verdict\s*:/m,
+	security: /^[\W_]*Security\s*:/m,
+};
+
+const names = SKILLS.join("|");
+export const SKILL_FILE = new RegExp(`(?:^|/)skills/(${names})/SKILL\\.md$`);
+// Not \b: /skill:security-notes is another skill
+const SKILL_COMMAND = new RegExp(`^/skill:(${names})(?=\\s|$)`);
 const PR_CREATE = /\bgh\s+pr\s+create\b/;
 
 export default function (pi: ExtensionAPI) {
@@ -28,16 +39,18 @@ export default function (pi: ExtensionAPI) {
 	let seq = 0;
 	let lastChange = 0;
 	let firstChange = 0;
-	const ran: Record<Skill, number> = { simplify: 0, review: 0, security: 0 };
+	const ran = {} as Record<Skill, number>;
+	// Skills loaded whose report has not come yet
+	const loaded = new Set<Skill>();
 
 	const reset = () => {
 		seq = 0;
 		lastChange = 0;
 		firstChange = 0;
-		ran.simplify = 0;
-		ran.review = 0;
-		ran.security = 0;
+		for (const skill of SKILLS) ran[skill] = 0;
+		loaded.clear();
 	};
+	reset();
 
 	const changed = () => {
 		seq += 1;
@@ -48,21 +61,23 @@ export default function (pi: ExtensionAPI) {
 		seq += 1;
 		ran[skill] = seq;
 	};
-
-	/** What is still missing before a PR, or an empty list */
-	const missing = (): string[] => {
-		const out: string[] = [];
-		if (ran.simplify === 0 || ran.simplify < firstChange) out.push("simplify (read skills/simplify/SKILL.md and follow it)");
-		if (ran.review === 0 || ran.review < lastChange) out.push("review (read skills/review/SKILL.md and follow it)");
-		if (ran.security === 0 || ran.security < lastChange) out.push("security (read skills/security/SKILL.md and follow it)");
-		return out;
+	// A skill with a report counts when the report starts; until then it is only loaded
+	const load = (skill: Skill) => {
+		if (REPORT[skill]) loaded.add(skill);
+		else marked(skill);
 	};
+
+	/** What is still missing before a PR, or an empty list. simplify must follow the first change; the others the last */
+	const missing = (): string[] =>
+		SKILLS.filter((skill) => ran[skill] === 0 || ran[skill] < (skill === "simplify" ? firstChange : lastChange)).map(
+			(skill) => `${skill} (read skills/${skill}/SKILL.md, follow it${REPORT[skill] ? ", and report in its format" : ""})`,
+		);
 
 	pi.on("session_start", async () => reset());
 
 	pi.on("input", async (event) => {
 		const m = event.text.trim().match(SKILL_COMMAND);
-		if (m) marked(m[1] as Skill);
+		if (m) load(m[1] as Skill);
 		return { action: "continue" as const };
 	});
 
@@ -71,7 +86,7 @@ export default function (pi: ExtensionAPI) {
 		const input = (event.input ?? {}) as Record<string, unknown>;
 		if (event.toolName === "read") {
 			const m = String(input.path ?? "").match(SKILL_FILE);
-			if (m) marked(m[1] as Skill);
+			if (m) load(m[1] as Skill);
 		} else if (event.toolName === "edit" || event.toolName === "write") {
 			changed();
 		} else if (event.toolName === "bash") {
@@ -79,6 +94,19 @@ export default function (pi: ExtensionAPI) {
 			// Once a PR is open, the next one only needs simplify again for changes made after it
 			if (PR_CREATE.test(commandText(command))) firstChange = 0;
 			if (changesCode(command)) changed();
+		}
+		return undefined;
+	});
+
+	pi.on("message_end", async (event) => {
+		const message = event.message as { role?: string; content?: unknown };
+		if (message.role !== "assistant" || loaded.size === 0) return undefined;
+		const text = textOf(message.content);
+		for (const skill of loaded) {
+			if (REPORT[skill]?.test(text)) {
+				loaded.delete(skill);
+				marked(skill);
+			}
 		}
 		return undefined;
 	});

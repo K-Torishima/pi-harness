@@ -31,14 +31,15 @@ gh api graphql -f query='query($o:String!,$r:String!,$n:Int!){repository(owner:$
 
 Keep the threads with `isResolved: false`. Check each one against the current code: already fixed, still a problem, or wrong.
 
-## 4. Read the change against four questions
+## 4. Read the change against three questions
 
 Read around each hunk: the callers, the tests, and the code it replaced. Not just the `+` lines.
 
 1. **Does it break?** A concrete input or state that gives a wrong result, a crash, or lost data. Failure paths, empty and boundary values, concurrent use, cleanup.
 2. **Does it do what was intended?** Compare with the one-sentence intent and the repo's rules. Missing parts, extra parts nobody asked for, a design that contradicts a decision written down.
 3. **Would the tests notice?** If you broke the new behavior, would a test fail? Name the case that is not covered.
-4. **Is anything exposed?** Secrets or personal details in code, logs, or messages; unchecked input reaching a shell, a query, or a file path; permissions wider than needed.
+
+Security (secrets, injection, access checks, permissions) is `/skill:security`'s job; the PR gate runs it too.
 
 ## 5. Verify every finding before you keep it
 
@@ -49,7 +50,7 @@ For each candidate, follow the code path that would fail. Run a quick check when
 
 ## 6. Report
 
-Lead with the verdict, then the findings, most severe first. Keep each finding to one or two lines:
+Start with the verdict line exactly as below, label in English even when you reply in another language (the PR gate looks for `Verdict:`). Then the findings, most severe first, one or two lines each:
 
 ```
 Verdict: fix first | ready to merge | not enough information

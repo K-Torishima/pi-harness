@@ -7,14 +7,26 @@ import { loadExtension } from "../../test/load-extension.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
+const REPORTS: Record<string, string> = { review: "Verdict: ready to merge", security: "**Security:** no issues found" };
+
 async function setup() {
 	const m = await loadExtension(join(HERE, "index.ts"), HERE);
+	const reports = (skill: string) => (REPORTS[skill] ? m.fire("message_end", { message: { role: "assistant", content: [{ type: "text", text: REPORTS[skill] }] } }) : undefined);
 	const ok = (toolName: string, input: Record<string, unknown>) => m.fire("tool_result", { toolName, input, isError: false, content: [] });
 	return {
 		...m,
 		edit: () => ok("edit", { path: "src/a.ts" }),
-		loads: (skill: string) => ok("read", { path: `/somewhere/pi-harness/skills/${skill}/SKILL.md` }),
-		types: (text: string) => m.fire("input", { text, source: "interactive" }),
+		// Loading a skill, then (for review and security) the report it asks for
+		loads: async (skill: string) => {
+			await ok("read", { path: `/somewhere/pi-harness/skills/${skill}/SKILL.md` });
+			await reports(skill);
+		},
+		types: async (text: string) => {
+			await m.fire("input", { text, source: "interactive" });
+			await reports(text.match(/^\/skill:(\w+)/)?.[1] ?? "");
+		},
+		readsOnly: (skill: string) => ok("read", { path: `/somewhere/pi-harness/skills/${skill}/SKILL.md` }),
+		says: (text: string) => m.fire("message_end", { message: { role: "assistant", content: [{ type: "text", text }] } }),
 		pr: () => m.bash("gh pr create --fill"),
 		prDone: () => ok("bash", { command: "gh pr create --fill" }),
 	};
@@ -95,4 +107,28 @@ test("/reviewed says what is missing", async () => {
 	await m.edit();
 	await m.command("reviewed", "");
 	assert.match(m.notes.at(-1) ?? "", /Before a PR: simplify .*review .*security/);
+});
+
+test("reading review or security opens nothing until its report starts", async () => {
+	const m = await setup();
+	await m.edit();
+	await m.loads("simplify");
+	await m.readsOnly("review");
+	await m.readsOnly("security");
+	assert.match(String((await m.pr())?.reason), /review .*security/);
+	await m.says("見ました。問題ありません。");
+	assert.equal((await m.pr())?.block, true, "a report without its first line does not count");
+	await m.says("Verdict: ready to merge\n1. nothing");
+	await m.says("Security: nothing exposed (docs only)");
+	assert.equal(await m.pr(), undefined);
+});
+
+test("/skill:security-notes is another skill", async () => {
+	const m = await setup();
+	await m.edit();
+	await m.loads("simplify");
+	await m.loads("review");
+	await m.fire("input", { text: "/skill:security-notes", source: "interactive" });
+	await m.says("Security: no issues found");
+	assert.equal((await m.pr())?.block, true);
 });

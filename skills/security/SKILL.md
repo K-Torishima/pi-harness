@@ -10,7 +10,11 @@ Do not edit files, post comments, or push while reviewing. If the request says t
 
 ## 1. Pin down the change
 
-Use the same diff as `/skill:review`: a PR number (`gh pr diff <n>`), a branch or path, or, with nothing given, uncommitted changes (`git diff HEAD` plus untracked files), else the branch against the default branch.
+The same diff `/skill:review` reads:
+
+- A PR number: `gh pr view <n> --json title,body,baseRefName,headRefName,files` and `gh pr diff <n>`
+- A branch or path: the diff of that branch against the default branch, or of that path
+- Nothing given: uncommitted changes (`git diff HEAD`, plus untracked files). If there are none, the current branch against the default branch (`git diff $(git merge-base HEAD origin/HEAD)...HEAD`)
 
 If the diff is empty, say so in one line and stop.
 
@@ -18,7 +22,7 @@ If the diff is empty, say so in one line and stop.
 
 In two or three lines for yourself: where does untrusted input enter this change (HTTP requests, URL and deep-link parameters, files, environment, tool or model output, other users' data), and what can the code reach (shell, database, file system, network, credentials, other users' records)?
 
-If the change touches none of that (docs only, styling, a pure function with trusted input), say so in one line with the reason, and stop. That still counts as a run.
+If the change touches none of that (docs only, styling, a pure function with trusted input), report `Security: nothing exposed (<why>)` and stop.
 
 ## 3. Check the change against each risk
 
@@ -41,10 +45,13 @@ Follow the path from where the input enters to where it does harm. Name the inpu
 
 ## 5. Report
 
-Lead with the verdict, then the findings, most severe first. Keep each finding to one or two lines:
+Start with the verdict line exactly as below, label in English even when you reply in another language (the PR gate looks for `Security:`). Then the findings, most severe first, one or two lines each:
 
 ```
 Security: fix first | no issues found | nothing exposed (<why>)
 1. path/to/file.ts:42 — <what is exposed>. An attacker sends <input> / <secret> ends up in <place>.
 2. ...
 ```
+
+If nothing survived verification, say "no issues found" and the one riskiest spot you checked.
+Reply in the language the user writes in.
