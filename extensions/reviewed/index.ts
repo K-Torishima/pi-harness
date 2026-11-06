@@ -14,6 +14,7 @@
  * /reviewed shows where things stand. Commands you type yourself with ! are never blocked.
  */
 
+import { normalize } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { textOf } from "../lib/request.ts";
 import { commandText } from "../lib/shell.ts";
@@ -85,7 +86,8 @@ export default function (pi: ExtensionAPI) {
 		if (event.isError) return undefined;
 		const input = (event.input ?? {}) as Record<string, unknown>;
 		if (event.toolName === "read") {
-			const m = String(input.path ?? "").match(SKILL_FILE);
+			// normalize: polish reads them as skills/polish/../review/SKILL.md
+			const m = normalize(String(input.path ?? "")).match(SKILL_FILE);
 			if (m) load(m[1] as Skill);
 		} else if (event.toolName === "edit" || event.toolName === "write") {
 			changed();

@@ -132,3 +132,13 @@ test("/skill:security-notes is another skill", async () => {
 	await m.says("Security: no issues found");
 	assert.equal((await m.pr())?.block, true);
 });
+
+test("polish counts through the skills it reads, even by a relative path", async () => {
+	const m = await setup();
+	await m.edit();
+	await m.readsOnly("polish/../simplify");
+	await m.readsOnly("polish/../review");
+	await m.says("Verdict: ready to merge");
+	await m.types("/skill:security");
+	assert.equal(await m.pr(), undefined);
+});
