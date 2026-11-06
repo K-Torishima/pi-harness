@@ -50,57 +50,41 @@ async function setup() {
 	const m = await loadExtension(join(HERE, "index.ts"), HERE);
 	const tool = m.ext.tools.get("anchor").definition;
 	const call = async (action: string, text: string) => (await tool.execute("id", { action, text }, undefined, undefined, m.ctx)).content[0].text as string;
-	/** The reminder text in a model call made on a one-message conversation */
+	/** The anchor section of the system prompt for a request starting now */
 	const reminderNow = async () => {
-		const r = await m.fire("context", { messages: [{ role: "user", content: "hi", timestamp: 1 }] });
-		const messages = r?.messages as { role: string; content: string }[];
-		return messages.find((x) => x.role === "custom")?.content ?? "";
+		const systemPromptOptions = { sections: {} as Record<string, string> };
+		await m.fire("before_agent_start", { prompt: "hi", systemPromptOptions });
+		return systemPromptOptions.sections.anchor ?? "";
 	};
-	const roles = async (convo: { role: string }[]) => ((await m.fire("context", { messages: convo }))?.messages as { role: string }[]).map((x) => x.role);
-	return { ...m, call, reminderNow, roles };
+	return { ...m, call, reminderNow };
 }
 
-test("the reminder goes right after the latest user message and is not stored", async () => {
+test("the reminder is a system prompt section set at the start of each request, and nothing is added to the conversation", async () => {
 	const m = await setup();
 	await m.call("add_decision", "use webhooks");
-	assert.deepEqual(await m.roles([{ role: "user" }]), ["user", "custom"]);
-	assert.match(await m.reminderNow(), /- use webhooks/);
-	assert.equal(m.appended.filter((a) => a.customType !== "anchor").length, 0, "only state entries are stored");
+	const systemPromptOptions = { sections: {} as Record<string, string> };
+	assert.equal(await m.fire("before_agent_start", { prompt: "hi", systemPromptOptions }), undefined, "no message is stored");
+	assert.match(systemPromptOptions.sections.anchor, /- use webhooks/);
+	assert.equal(m.ext.handlers.get("context"), undefined, "model calls leave the conversation alone, so the prompt cache holds");
 });
 
-test("after a tool result the reminder stays before the tool calls, so there is nothing trailing to loop on", async () => {
-	const m = await setup();
-	assert.deepEqual(await m.roles([{ role: "user" }, { role: "assistant" }, { role: "user" }, { role: "assistant" }, { role: "toolResult" }]), [
-		"user",
-		"assistant",
-		"user",
-		"custom",
-		"assistant",
-		"toolResult",
-	]);
-});
-
-test("in a /goal loop the reminder follows the latest nudge, not the kickoff", async () => {
-	const m = await setup();
-	const convo = [{ role: "user" }, { role: "assistant" }, { role: "toolResult" }, { role: "assistant" }, { role: "custom" }, { role: "assistant" }, { role: "toolResult" }];
-	assert.deepEqual(await m.roles(convo), ["user", "assistant", "toolResult", "assistant", "custom", "custom", "assistant", "toolResult"]);
-});
-
-test("a typed decision stays flagged until the AI records each kind; an extension message clears it", async () => {
+test("a typed decision is flagged in the next request's section; an extension message clears it", async () => {
 	const m = await setup();
 	await m.fire("input", { text: "Redis はやめて Postgres にしよう", source: "interactive" });
-	assert.match(await m.reminderNow(), /looks like it decides and rejects/);
-	await m.call("add_rejected", "Redis");
-	assert.match(await m.reminderNow(), /looks like it decides something.*add_decision/);
-	await m.call("add_decision", "Postgres");
-	assert.doesNotMatch(await m.reminderNow(), /looks like it/);
-
+	assert.match(await m.reminderNow(), /looks like it decides and rejects.*record it once/);
 	await m.fire("input", { text: "それでいいよ", source: "interactive" });
 	assert.match(await m.reminderNow(), /looks like it decides/);
 	await m.fire("input", { text: "Goal: ship it", source: "extension" });
 	assert.doesNotMatch(await m.reminderNow(), /looks like it/);
 });
 
+test("a run started by a custom message (a /goal kickoff, a letter) gets the section too", async () => {
+	const m = await setup();
+	await m.call("set_focus", "ship the importer");
+	const systemPromptOptions = { sections: {} as Record<string, string> };
+	await m.fire("before_agent_start", { messageType: "custom", message: { customType: "goal", content: "Goal" }, systemPromptOptions });
+	assert.match(systemPromptOptions.sections.anchor, /Current focus: ship the importer/);
+});
 test("set_next stops after two calls per reply, and each user or /goal message starts a new count", async () => {
 	const m = await setup();
 	await m.call("set_next", "one");

@@ -5,9 +5,9 @@
  * - Always show "◎ focus" and "▸ next step" above the editor
  * - Set the terminal tab title to the focus (so you can tell sessions apart when switching tabs)
  * AI drift:
- * - Before every model call, not just every request, the AI re-reads the focus, what was decided, what was rejected,
- *   what is still open, and the rules to keep. It is added to each call and never stored, so long runs, /goal loops,
- *   and compaction do not wash it out
+ * - At the start of every request, the AI gets the focus, what was decided, what was rejected, what is still open,
+ *   and the rules to keep, in a system prompt section. pi sends only a patch when it changed, so the prompt cache holds,
+ *   and compaction never summarizes it away
  * - When your message looks like it decides or rejects something, the AI is asked to record it
  * - The AI rewrites the "next step" with the anchor tool at the end of every reply
  *
@@ -32,7 +32,7 @@ const AnchorParams = Type.Object({
 export default function (pi: ExtensionAPI) {
 	let state: Anchor = fresh();
 	let current: ExtensionContext | undefined;
-	// The user's latest message, when it looks like a decision or rejection that has not been recorded yet
+	// The user's latest message, when it looks like a decision or rejection. The next request's section asks the AI to record it
 	let pending: { kinds: Kind[]; text: string } | undefined;
 	// set_next calls since the last user or extension message (one /goal round counts as one reply)
 	let setNextCalls = 0;
@@ -40,11 +40,6 @@ export default function (pi: ExtensionAPI) {
 		const role = (event.message as { role?: string }).role;
 		if (role === "user" || role === "custom") setNextCalls = 0;
 	});
-	const recorded = (kind: Kind) => {
-		if (!pending) return;
-		pending.kinds = pending.kinds.filter((k) => k !== kind);
-		if (pending.kinds.length === 0) pending = undefined;
-	};
 
 	const render = (ctx: ExtensionContext) => {
 		if (!ctx.hasUI) return;
@@ -96,11 +91,9 @@ export default function (pi: ExtensionAPI) {
 					break;
 				case "add_decision":
 					state.decisions = push(state.decisions, text, LIMITS.decisions);
-					recorded("decides");
 					break;
 				case "add_rejected":
 					state.rejected = push(state.rejected, text, LIMITS.rejected);
-					recorded("rejects");
 					break;
 				case "add_open":
 					state.open = push(state.open, text, LIMITS.open);
@@ -117,17 +110,15 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
-	// Before every model call, the reminder goes right after the latest user or extension message (a /goal nudge is one).
-	// That keeps it next to what the model is working on, in a long run too. Never after a tool result:
-	// a trailing "before ending your reply, call set_next" there makes the model call set_next again and again.
-	// It is not stored in the session. It only changes when the anchor changes, so most calls keep the prompt cache
-	pi.on("context", async (event) => {
-		const message = { role: "custom" as const, customType: "anchor", content: reminder(state, pending), display: false, timestamp: Date.now() };
-		const messages = [...event.messages];
-		const roles = messages.map((m) => (m as { role?: string }).role);
-		const at = Math.max(roles.lastIndexOf("user"), roles.lastIndexOf("custom"));
-		messages.splice(at + 1, 0, message as (typeof messages)[number]);
-		return { messages };
+	// The reminder lives in a system prompt section, refreshed at the start of every request. pi compares sections with
+	// what the model already has and appends a patch only when one changed; models that take system messages mid-conversation
+	// (the gpt-6 models in use) keep their cached prefix. It used to be inserted into the conversation on every call, and each
+	// change or new request re-read everything after the system prompt (about 270 of 1,700 calls in two days).
+	// Changes made during a request show up in the next one, and a /goal run is one request for all its rounds: pi copies the
+	// sections for each run, so there is no way to swap them mid-run (and a patch after a tool result ending in "call set_next" would loop)
+	pi.on("before_agent_start", async (event) => {
+		event.systemPromptOptions.sections.anchor = reminder(state, pending);
+		return undefined;
 	});
 
 	// A message you type that decides or rejects something is flagged until the AI records it
@@ -171,7 +162,7 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("decided", {
-		description: "Record a decision. The AI re-reads it before every model call (/decided <decision>)",
+		description: "Record a decision. The AI gets it with every request from now on (/decided <decision>)",
 		handler: async (args, ctx) => {
 			const text = args.trim();
 			if (!text) return ctx.ui.notify("Write it as /decided <decision>.", "info");

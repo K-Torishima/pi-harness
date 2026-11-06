@@ -1,5 +1,5 @@
 /**
- * Pure parts of anchor: the state, the reminder the AI gets before every model call,
+ * Pure parts of anchor: the state, the reminder the AI gets at the start of every request,
  * and spotting a user message that decides or rejects something. No pi imports, so tests can load it directly.
  */
 
@@ -56,9 +56,9 @@ export function decisionKinds(text: string): Kind[] {
 	return kinds;
 }
 
-/** The reminder put in front of the AI before every model call */
+/** The reminder the AI gets at the start of every request */
 export function reminder(state: Anchor, pending?: { kinds: Kind[]; text: string }): string {
-	const lines = ["[anchor] Re-read this before you act."];
+	const lines = ["Re-read this before you act. It is current as of the start of this request."];
 	lines.push(`Current focus: ${state.focus || "(not set — infer it from the request and, if it is clear, set it with set_focus on the anchor tool)"}`);
 	if (state.next) lines.push(`Next step decided last time: ${state.next}`);
 	if (state.decisions.length > 0) lines.push("Decided (treat as settled, not as proposals):", ...state.decisions.map((d) => `- ${d}`));
@@ -69,7 +69,7 @@ export function reminder(state: Anchor, pending?: { kinds: Kind[]; text: string 
 		const what = pending.kinds.map((k) => (k === "decides" ? "decides" : "rejects")).join(" and ");
 		const tools = pending.kinds.map((k) => (k === "decides" ? "add_decision" : "add_rejected")).join(" and ");
 		lines.push(
-			`The user's latest message looks like it ${what} something: "${quote}". If it does, record it with ${tools} on the anchor tool, one sentence each, before going on. If it only wavers or asks, record nothing.`,
+			`The user's latest message looks like it ${what} something: "${quote}". If it does, record it once with ${tools} on the anchor tool, one sentence each, before going on. If it only wavers or asks, record nothing.`,
 		);
 	}
 	lines.push("Rules to keep:", ...RULES.map((r) => `- ${r}`));
