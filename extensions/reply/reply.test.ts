@@ -38,6 +38,9 @@ test("issue numbers need a title or link", () => {
 	assert.deepEqual(checkReply("起動方法整理 #157 と クラウドAI検証 #156 はクローズ済みです。", JA), [], "a title before the number");
 	assert.match(checkReply("未完了は #43 です。", JA).join(), /#43 by number only/, "a particle is not a title");
 	assert.deepEqual(checkReply("構成は、親Issue #1〜#9と、作業Issue #10〜#54です。", JA), [], "a range");
+	assert.deepEqual(checkReply("#117 - #122 は未解決です。", JA), [], "a spaced range");
+	for (const r of ["調査した #43 は未解決です。", "関連バグ #43 は未解決です。", "この件 #43 は未解決です。"]) assert.match(checkReply(r, JA).join(), /#43 by number only/, r);
+	assert.match(checkReply("#43 は未解決です。", JA, "```\nhttps://github.com/o/r/issues/43\n```").join(), /#43/, "a link inside a code block explained nothing");
 	assert.deepEqual(checkReply("#345 は完了しました。", "design-system の #345 を進めてください。"), [], "the user wrote it");
 	assert.deepEqual(checkReply("https://github.com/o/r/pull/12 の #12 はマージ済みです。", JA), []);
 	assert.deepEqual(checkReply("色は #fff にしました。見出しは ## です。", JA), []);

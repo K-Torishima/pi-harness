@@ -40,15 +40,24 @@ const COLOR = /色|カラー|colou?r|background|fill|stroke|border|rgb|hex|css|t
 
 const REF = /(?<![\w/[#&])#(\d+)\b/g;
 /**
- * A Japanese title right before the number ("起動方法整理 #157", "Crashlytics取得失敗 #43"), not a label or a particle
- * ("イシュー #3", "未完了は #43"). English puts verbs there ("I checked #39"), so only words with kanji or katakana count
+ * A Japanese title right before the number ("起動方法整理 #157", "Crashlytics取得失敗 #43"). Not a particle ("未完了は #43"),
+ * a verb ("調査した #43"), a pointer ("この"), or a word that only names the kind of thing ("関連バグ #43").
+ * English puts verbs there ("I checked #39"), so only words with kanji or katakana count
  */
 function titleBefore(text: string): boolean {
 	const word = text.match(/([\p{L}\p{N}]+)\s?$/u)?.[1] ?? "";
-	return /[\p{Script=Han}\p{Script=Katakana}]/u.test(word) && !/^(?:イシュー|プルリク|チケット)$/.test(word) && !/[のとはがをにでもへや]$/.test(word);
+	return (
+		word.length >= 3 &&
+		/[\p{Script=Han}\p{Script=Katakana}]/u.test(word) &&
+		!/[のとはがをにでもへやたてるだしすい]$/.test(word) &&
+		!/^(?:この|その|あの|同じ|別の)/.test(word) &&
+		!GENERIC.test(word)
+	);
 }
 // "#1〜#9", "#117-#122": a range, named by the words around it ("親Issue #1〜#9")
 const RANGE = /^\s?[〜~～\-–]\s?#\d|\d\s?[〜~～\-–]\s?$/;
+// Generic words that only say what kind of thing it is, not which one ("関連バグ #43", "親Issue #9")
+const GENERIC = /(?:バグ|不具合|課題|タスク|チケット|イシュー|プルリク|件|対応|修正|Issue|issue|PR)$/;
 
 /** Every #number the text mentions, and the ones it explains (with a link or a title right after) */
 function refsIn(text: string): { all: string[]; explained: Set<string> } {
@@ -60,9 +69,9 @@ function refsIn(text: string): { all: string[]; explained: Set<string> } {
 		// #333 or #000000 next to a word about color is a color
 		const line = text.slice(text.lastIndexOf("\n", at) + 1, text.indexOf("\n", at) === -1 ? undefined : text.indexOf("\n", at));
 		if ([3, 4, 6, 8].includes(n.length) && COLOR.test(line)) continue;
-		const before = text.slice(Math.max(0, at - 3), at);
-		const after = text.slice(at + m[0].length, at + m[0].length + 4);
-		const linked = before.endsWith("[") || new RegExp(`/(?:issues|pull)/${n}\\b`).test(text);
+		const before = text.slice(Math.max(0, at - 6), at);
+		const after = text.slice(at + m[0].length, at + m[0].length + 6);
+		const linked = before.endsWith("[");
 		const titled = /^(?:「|（|\s?\(|:\s?\S|：|\s[—–-]\s)/.test(after) || titleBefore(text.slice(Math.max(0, at - 16), at));
 		if (linked || titled || RANGE.test(after) || RANGE.test(before)) explained.add(n);
 		if (!all.includes(n)) all.push(n);
@@ -78,7 +87,8 @@ function refsIn(text: string): { all: string[]; explained: Set<string> } {
  */
 function bareRefs(text: string, userText: string, earlier: string): string[] {
 	const { all, explained } = refsIn(text);
-	const known = new Set([...refsIn(userText).all, ...refsIn(earlier).explained]);
+	// Code blocks and logs in earlier replies did not explain anything to the user
+	const known = new Set([...refsIn(userText).all, ...refsIn(withoutCode(earlier)).explained]);
 	return all.filter((n) => !explained.has(n) && !known.has(n)).map((n) => `#${n}`);
 }
 

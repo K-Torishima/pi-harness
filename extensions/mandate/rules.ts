@@ -190,13 +190,18 @@ export function asksPermission(reply: string): boolean {
 // (閉じ括弧, 送信処理, 公開API, マージされた変更, 認証処理) does not count
 const OUTWARD_ASKS: { grant: Grant | "user"; re: RegExp }[] = [
 	{ grant: "push", re: /プッシュ|\bpush\b/i },
-	{ grant: "pr", re: /マージし|(?:PR|プルリク)を?(?:作|立て|出)|\bmerge\b/i },
+	// Closing or commenting on a PR is gh pr, under the pr grant, as the tool layer classifies it
+	{
+		grant: "pr",
+		re: /マージし|(?:PR|プルリク)を?(?:作|立て|出)|(?:PR|プルリク)[^。？?]{0,20}(?:閉じ|クローズ|コメント)|(?:閉じ|クローズし|コメントし)[^。？?]{0,20}(?:PR|プルリク)|\bmerge\b/i,
+	},
 	{
 		grant: "issue",
-		re: /(?:イシュー|issue|PR|プルリク)[^。？?]{0,20}(?:閉じ|クローズ)|(?:閉じ|クローズし)[^。？?]{0,20}(?:イシュー|issue|PR)|として(?:閉じ|クローズ)|クローズし|コメントし|(?:イシュー|issue)を?(?:作|立て)|\bclose\b/i,
+		re: /(?:イシュー|issue)[^。？?]{0,20}(?:閉じ|クローズ|コメント)|(?:閉じ|クローズし|コメントし)[^。？?]{0,20}(?:イシュー|issue)|として(?:閉じ|クローズ)|(?:イシュー|issue)を?(?:作|立て|出)|\bclose\b/i,
 	},
 	{ grant: "deploy", re: /デプロイ|配備し|本番(?:に|へ)|リリースし|公開し|\b(?:deploy|release|publish)\b/i },
-	{ grant: "user", re: /認証(?:し|を(?:進め|通|追加))|ログインし|権限を(?:追加|付与|与え)|接続を追加|送信し|投稿し|\b(?:sign in|log in|authori[sz]e)\b/i },
+	// Not 実行権限 (chmod on a file is local work)
+	{ grant: "user", re: /認証(?:し|を(?:進め|通|追加))|ログインし|(?<!実行)権限を(?:追加|付与|与え)|接続を追加|送信し|投稿し|\b(?:sign in|log in|authori[sz]e)\b/i },
 ];
 
 /** The outward actions the last question of the reply asks about, by the grant that covers them */

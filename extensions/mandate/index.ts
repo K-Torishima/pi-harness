@@ -23,7 +23,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { textOf } from "../lib/request.ts";
-import { asksOutward, asksPermission, outwardAsks, blamesMode, classifyTool, GRANTS, type Grant, MODES, type Mode, quoteMatches } from "./rules.ts";
+import { asksPermission, outwardAsks, blamesMode, classifyTool, GRANTS, type Grant, MODES, type Mode, quoteMatches } from "./rules.ts";
 
 type State = { mode: Mode; quote: string; grants: Grant[] };
 
@@ -187,10 +187,11 @@ export default function (pi: ExtensionAPI) {
 		const text = textOf(last?.content);
 		let content: string | undefined;
 		// Asking before an outward action the user has not allowed, or one no grant covers (signing in), is the right stop in do too
-		const needsUser = outwardAsks(text).some((g) => g === "user" || !state.grants.includes(g));
+		const asks = outwardAsks(text);
+		const needsUser = asks.some((g) => g === "user" || !state.grants.includes(g));
 		if (state.mode === "do" && asksPermission(text) && !needsUser) {
 			content = `[mandate] You are in do mode for this request ("${state.quote}"), but your reply ends by asking for permission. If what you are asking about is part of this request and needs no outward grant, do it now and report. If it truly needs the user (a choice between options, or an outward action not granted), end with that one question.`;
-		} else if (startedInLook() && (blamesMode(text) || (asksPermission(text) && !asksOutward(text)))) {
+		} else if (startedInLook() && (blamesMode(text) || (asksPermission(text) && asks.length === 0))) {
 			content = `[mandate] Your reply stops short in look mode, but look is only the default, and the mode is yours to raise. Re-read the user's latest message: if it asks you to change, build, fix, or run something, call mandate set_mode do with their exact words now and do it. If it only asks a question or asks you to look, end with the answer and do not mention modes; keep one closing question only when the next step is an outward action the user has not allowed or a choice only they can make.`;
 		}
 		if (!content) return undefined;

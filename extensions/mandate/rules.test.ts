@@ -163,4 +163,8 @@ test("outwardAsks names the grant each outward question needs", () => {
 	assert.deepEqual(outwardAsks("カレンダーの読み取り権限を追加する認証を進めてよいですか？"), ["user"]);
 	assert.deepEqual(outwardAsks("この session に Notion 接続を追加してよいですか？"), ["user"]);
 	assert.deepEqual(outwardAsks("認証処理のテストを追加してよいですか？"), [], "local work on auth code");
+	assert.deepEqual(outwardAsks("PRをクローズしてよいですか？"), ["pr"], "gh pr close is under pr");
+	assert.deepEqual(outwardAsks("イシューにコメントしてよいですか？"), ["issue"]);
+	assert.deepEqual(outwardAsks("この件でイシューを出してよいですか？"), ["issue"]);
+	assert.deepEqual(outwardAsks("スクリプトに実行権限を追加してよいですか？"), [], "chmod is local");
 });

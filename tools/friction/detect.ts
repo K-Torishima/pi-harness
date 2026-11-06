@@ -26,8 +26,14 @@ const PUSHBACK =
  * Words PUSHBACK matches that are not pushback: "違う" describing a difference ("体験が明らかに違うものとか"),
  * and "勝手に" giving permission ("勝手に調べていいよ")
  */
-const NOT_PUSHBACK = /違う(?:もの|こと|点|ところ|とか|部分|の[か？?])|勝手に[^。！!？?]{0,12}(?:ていい|て良い|てOK|てok|てください|どうぞ)/gi;
-const isPushback = (text: string) => PUSHBACK.test(text.replace(NOT_PUSHBACK, ""));
+const GO_AHEAD = /勝手に[^。！!？?、]{0,12}(?:ていい|て良い|てOK|てok|どうぞ)(?!とは|って|と言)/gi;
+// Only in a question: "違うところ直してる" and "違うことしないで" are pushback
+const DIFFERENCE = /違う(?:もの|点|部分|とか)/g;
+const isPushback = (text: string) => {
+	let rest = text.replace(GO_AHEAD, "");
+	if (/[？?]\s*$/.test(text)) rest = rest.replace(DIFFERENCE, "");
+	return PUSHBACK.test(rest);
+};
 /** A short question about where the work is: the agent did not make its state visible */
 const STATUS = /どこまで|進捗|(?:終わ|おわ)って(?:る|ます)[？?]|(?:した|できた|やった|終わった|直した|入れた)[？?]\s*$/;
 const STATUS_MAX = 40;
