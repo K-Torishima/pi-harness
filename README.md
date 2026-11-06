@@ -15,7 +15,7 @@ It is grown one piece at a time: only things that were actually missed while usi
 
 - `extensions/anchor/` — pins the current focus, the next step, and what was decided, rejected, and left open, so neither you nor the AI drifts
   - Shows "◎ focus" and "▸ next" above the editor, and sets the terminal tab title to the focus
-  - At the start of every request, the AI gets the focus, what is decided, rejected, and still open, and the rules, as a hidden message. It is written once and never moved, so the prompt cache holds; when compaction summarizes it away, it comes back right after the summary
+  - At the start of every request, the AI gets the focus, what is decided, rejected, and still open, and the rules, in a system prompt section. pi sends only a patch when it changed, so the prompt cache holds, and compaction never summarizes it away. Changes made during a request reach the AI with the next one
   - When your message looks like it decides or rejects something, the AI is asked to record it
   - `/focus <focus>`, `/decided <decision>`, `/rejected <option>`, `/now`, `/anchor clear`. A goal set with `/goal` becomes the focus
 - `extensions/goal/` — `/goal <goal>` makes the AI define done criteria and keep working until they hold

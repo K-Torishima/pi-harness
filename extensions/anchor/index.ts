@@ -6,8 +6,8 @@
  * - Set the terminal tab title to the focus (so you can tell sessions apart when switching tabs)
  * AI drift:
  * - At the start of every request, the AI gets the focus, what was decided, what was rejected, what is still open,
- *   and the rules to keep, as a hidden message. It is written once and never moved or rewritten, so the prompt cache
- *   holds across the run. When compaction summarizes it away, the same text comes back right after the summary
+ *   and the rules to keep, in a system prompt section. pi sends only a patch when it changed, so the prompt cache holds,
+ *   and compaction never summarizes it away
  * - When your message looks like it decides or rejects something, the AI is asked to record it
  * - The AI rewrites the "next step" with the anchor tool at the end of every reply
  *
@@ -117,27 +117,14 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
-	// The reminder is written once per request, next to the user's message, and stays where it is.
-	// Rewriting or moving it inside the conversation made the provider re-read everything after the system prompt
-	// (about 270 of 1,700 calls in two days), so changes made during a request show up in the next one.
-	// Never after a tool result: a trailing "before ending your reply, call set_next" makes the model call it again and again
-	let written: string | undefined;
-	pi.on("before_agent_start", async () => {
-		written = reminder(state, pending);
-		return { message: { customType: "anchor", content: written, display: false } };
-	});
-
-	// Compaction can summarize the reminder away in a long run. Put the same text back right after the summary,
-	// where it stays until the next compaction
-	pi.on("context", async (event) => {
-		if (!written) return undefined;
-		const isAnchor = (m: unknown) => (m as { role?: string; customType?: string }).role === "custom" && (m as { customType?: string }).customType === "anchor";
-		if (event.messages.some(isAnchor)) return undefined;
-		const roles = event.messages.map((m) => (m as { role?: string }).role);
-		const at = Math.max(roles.lastIndexOf("compactionSummary"), roles.lastIndexOf("branchSummary"));
-		const messages = [...event.messages];
-		messages.splice(at + 1, 0, { role: "custom", customType: "anchor", content: written, display: false, timestamp: 0 } as (typeof messages)[number]);
-		return { messages };
+	// The reminder lives in a system prompt section, refreshed at the start of every request. pi compares sections with
+	// what the model already has and appends a patch only when one changed; models that take system messages mid-conversation
+	// (the gpt-6 models in use) keep their cached prefix. It used to be inserted into the conversation on every call, and each
+	// change or new request re-read everything after the system prompt (about 270 of 1,700 calls in two days).
+	// Changes made during a request show up in the next one: a patch after a tool result ending in "call set_next" would loop
+	pi.on("before_agent_start", async (event) => {
+		event.systemPromptOptions.sections.anchor = reminder(state, pending);
+		return undefined;
 	});
 
 	// A message you type that decides or rejects something is flagged until the AI records it

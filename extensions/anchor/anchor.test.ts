@@ -50,38 +50,22 @@ async function setup() {
 	const m = await loadExtension(join(HERE, "index.ts"), HERE);
 	const tool = m.ext.tools.get("anchor").definition;
 	const call = async (action: string, text: string) => (await tool.execute("id", { action, text }, undefined, undefined, m.ctx)).content[0].text as string;
-	/** The reminder written at the start of a request */
-	const reminderNow = async () => String(((await m.fire("before_agent_start", { prompt: "hi" }))?.message as { content?: string })?.content ?? "");
-	const context = async (messages: Record<string, unknown>[]) => (await m.fire("context", { messages }))?.messages as Record<string, unknown>[] | undefined;
-	return { ...m, call, reminderNow, context };
+	/** The anchor section of the system prompt for a request starting now */
+	const reminderNow = async () => {
+		const systemPromptOptions = { sections: {} as Record<string, string> };
+		await m.fire("before_agent_start", { prompt: "hi", systemPromptOptions });
+		return systemPromptOptions.sections.anchor ?? "";
+	};
+	return { ...m, call, reminderNow };
 }
 
-test("the reminder is a hidden message written once at the start of a request", async () => {
+test("the reminder is a system prompt section set at the start of each request, and nothing is added to the conversation", async () => {
 	const m = await setup();
 	await m.call("add_decision", "use webhooks");
-	const r = await m.fire("before_agent_start", { prompt: "hi" });
-	assert.deepEqual({ ...(r?.message as object), content: undefined }, { customType: "anchor", content: undefined, display: false });
-	assert.match(await m.reminderNow(), /- use webhooks/);
-});
-
-test("model calls leave the conversation alone while the reminder is in it, so the prompt cache holds", async () => {
-	const m = await setup();
-	await m.reminderNow();
-	await m.call("set_next", "something new");
-	const convo = [{ role: "user" }, { role: "custom", customType: "anchor", content: "old" }, { role: "assistant" }, { role: "toolResult" }];
-	assert.equal(await m.context(convo), undefined, "a change during the request does not rewrite or move it");
-});
-
-test("after compaction removes it, the same reminder comes back right after the summary", async () => {
-	const m = await setup();
-	assert.equal(await m.context([{ role: "user" }]), undefined, "nothing before the first request");
-	const text = await m.reminderNow();
-	const after = await m.context([{ role: "compactionSummary" }, { role: "assistant" }, { role: "toolResult" }]);
-	assert.deepEqual(after?.map((x) => x.role), ["compactionSummary", "custom", "assistant", "toolResult"]);
-	assert.equal(after?.[1].content, text);
-	await m.call("add_decision", "later");
-	const again = await m.context([{ role: "compactionSummary" }, { role: "assistant" }]);
-	assert.equal(again?.[1].content, text, "the same text until the next request, so the next call hits the cache too");
+	const systemPromptOptions = { sections: {} as Record<string, string> };
+	assert.equal(await m.fire("before_agent_start", { prompt: "hi", systemPromptOptions }), undefined, "no message is stored");
+	assert.match(systemPromptOptions.sections.anchor, /- use webhooks/);
+	assert.equal(m.ext.handlers.get("context"), undefined, "model calls leave the conversation alone, so the prompt cache holds");
 });
 
 test("a typed decision stays flagged until the AI records each kind; an extension message clears it", async () => {
