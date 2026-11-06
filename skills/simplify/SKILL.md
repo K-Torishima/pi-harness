@@ -41,4 +41,5 @@ Simplified: <n> edits, tests pass
 Left as is: <one thing you considered and why it stays>
 ```
 
-If nothing was worth changing, say "Already simple" and stop. Reply in the language the user writes in.
+If nothing was worth changing, write `Simplified: 0 edits (already simple)` and stop.
+Keep the `Simplified:` label in English even when you reply in another language (the PR gate looks for it). Reply in the language the user writes in.

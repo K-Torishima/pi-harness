@@ -6,14 +6,16 @@
  *
  * - Counts as a change: a successful edit / write, or any part of a bash command that changes files,
  *   including git commands that bring in code (pull, cherry-pick, stash pop, apply). git add / commit / push / fetch / tag do not count
- * - Counts as a run: the skill is loaded (/skill:<name> typed by you, or the AI reading skills/<name>/SKILL.md) and,
- *   for review and security, its report then starts ("Verdict:" / "Security:"), so reading the file alone opens nothing
+ * - Counts as a run: the skill is loaded (/skill:<name> typed by you, or the AI reading skills/<name>/SKILL.md) and
+ *   its report then starts ("Simplified:" / "Verdict:" / "Security:"), so reading the file alone opens nothing.
+ *   simplify counts at its report, after its own edits, so the edits it makes do not ask for another simplify
  * - gh pr create is blocked unless simplify ran after the first change since the last PR,
  *   and review and security ran after the last change (fixing what they found needs another run)
  *
  * /reviewed shows where things stand. Commands you type yourself with ! are never blocked.
  */
 
+import { resolve } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { textOf } from "../lib/request.ts";
 import { commandText } from "../lib/shell.ts";
@@ -22,8 +24,9 @@ import { changesCode } from "../mandate/rules.ts";
 const SKILLS = ["simplify", "review", "security"] as const;
 type Skill = (typeof SKILLS)[number];
 
-/** The first line of the skill's report. simplify has none: it changes code, and loading it counts */
-const REPORT: Partial<Record<Skill, RegExp>> = {
+/** The line each skill's report starts with */
+const REPORT: Record<Skill, RegExp> = {
+	simplify: /^[\W_]*Simplified\s*:/m,
 	review: /^[\W_]*Verdict\s*:/m,
 	security: /^[\W_]*Security\s*:/m,
 };
@@ -61,16 +64,13 @@ export default function (pi: ExtensionAPI) {
 		seq += 1;
 		ran[skill] = seq;
 	};
-	// A skill with a report counts when the report starts; until then it is only loaded
-	const load = (skill: Skill) => {
-		if (REPORT[skill]) loaded.add(skill);
-		else marked(skill);
-	};
+	// A skill counts when its report starts; until then it is only loaded
+	const load = (skill: Skill) => loaded.add(skill);
 
 	/** What is still missing before a PR, or an empty list. simplify must follow the first change; the others the last */
 	const missing = (): string[] =>
 		SKILLS.filter((skill) => ran[skill] === 0 || ran[skill] < (skill === "simplify" ? firstChange : lastChange)).map(
-			(skill) => `${skill} (read skills/${skill}/SKILL.md, follow it${REPORT[skill] ? ", and report in its format" : ""})`,
+			(skill) => `${skill} (read skills/${skill}/SKILL.md, follow it, and report in its format)`,
 		);
 
 	pi.on("session_start", async () => reset());
@@ -81,11 +81,12 @@ export default function (pi: ExtensionAPI) {
 		return { action: "continue" as const };
 	});
 
-	pi.on("tool_result", async (event) => {
+	pi.on("tool_result", async (event, ctx) => {
 		if (event.isError) return undefined;
 		const input = (event.input ?? {}) as Record<string, unknown>;
 		if (event.toolName === "read") {
-			const m = String(input.path ?? "").match(SKILL_FILE);
+			// Resolved the way pi's read tool does (a leading @ dropped, relative to cwd), so polish's skills/polish/../review/SKILL.md counts
+			const m = resolve(ctx.cwd, String(input.path ?? "").replace(/^@/, "")).match(SKILL_FILE);
 			if (m) load(m[1] as Skill);
 		} else if (event.toolName === "edit" || event.toolName === "write") {
 			changed();
@@ -103,7 +104,7 @@ export default function (pi: ExtensionAPI) {
 		if (message.role !== "assistant" || loaded.size === 0) return undefined;
 		const text = textOf(message.content);
 		for (const skill of loaded) {
-			if (REPORT[skill]?.test(text)) {
+			if (REPORT[skill].test(text)) {
 				loaded.delete(skill);
 				marked(skill);
 			}

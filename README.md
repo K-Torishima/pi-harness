@@ -50,6 +50,7 @@ It is grown one piece at a time: only things that were actually missed while usi
 ### Review
 
 - `skills/simplify/` — makes a change smaller and plainer without changing what it does, then runs the tests. `/skill:simplify`
+- `skills/polish/` — simplify, then review, in one go: reads both skills and follows them on the same change, with one report. `/skill:polish [PR number]`
 - `skills/review/` — finds bugs, checks the change against what was intended, and collects review comments still open on its PR. `/skill:review [PR number]`
 - `skills/security/` — checks a change for what an attacker or a leak could use: secrets and personal data, injection, missing auth or access checks, unsafe input, wide permissions, new dependencies, weak crypto. Stops early when the change exposes nothing. `/skill:security [PR number]`
 - `extensions/reviewed/` — blocks `gh pr create` until simplify has run on the change, and review and security have run after the last edit. Review and security count only once their report starts (`Verdict:` / `Security:`), not when the skill is merely read. `/reviewed` shows what is missing
