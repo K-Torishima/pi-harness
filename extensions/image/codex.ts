@@ -22,9 +22,10 @@ export function codexArgs(prompt: string, references: string[] = []): string[] {
 	return args;
 }
 
-export type CodexRun = { threadId?: string; message?: string; error?: string };
+/** failure ends the turn; notice is any other error event, such as a retry that may have recovered */
+export type CodexRun = { threadId?: string; message?: string; failure?: string; notice?: string };
 
-/** Read codex's --json event lines: the thread id (generated images are saved under it), its last message, and any error */
+/** Read codex's --json event lines: the thread id (generated images are saved under it), its last message, and errors */
 export function readEvents(stdout: string): CodexRun {
 	const run: CodexRun = {};
 	for (const line of stdout.split("\n")) {
@@ -36,7 +37,8 @@ export function readEvents(stdout: string): CodexRun {
 		}
 		if (event?.type === "thread.started" && typeof event.thread_id === "string") run.threadId = event.thread_id;
 		else if (event?.type === "item.completed" && event.item?.type === "agent_message") run.message = String(event.item.text ?? "").trim();
-		else if (event?.type === "error" || event?.type === "turn.failed") run.error = String(event.message ?? event.error?.message ?? "codex failed");
+		else if (event?.type === "turn.failed") run.failure = String(event.error?.message ?? event.message ?? "codex failed");
+		else if (event?.type === "error") run.notice = String(event.message ?? "");
 	}
 	return run;
 }

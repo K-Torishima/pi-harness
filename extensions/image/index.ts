@@ -10,7 +10,7 @@
  */
 
 import { spawn } from "node:child_process";
-import { readdir, readFile, stat } from "node:fs/promises";
+import { access, readdir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { type ExtensionAPI, resizeImage } from "@earendil-works/pi-coding-agent";
@@ -26,26 +26,43 @@ const ImageParams = Type.Object({
 	references: Type.Optional(Type.Array(Type.String(), { description: "Paths of images to edit or to follow as a reference" })),
 });
 
-function runCodex(args: string[], cwd: string, signal: AbortSignal | undefined): Promise<{ code: number | null; stdout: string; stderr: string }> {
+type Run = { code: number | null; timedOut: boolean; stdout: string; stderr: string };
+
+function runCodex(args: string[], cwd: string, signal: AbortSignal | undefined): Promise<Run> {
 	return new Promise((done, fail) => {
 		// stdin is closed: codex otherwise waits to read more prompt from it
 		const child = spawn("codex", args, { cwd, stdio: ["ignore", "pipe", "pipe"], signal, timeout: TIMEOUT_MS });
 		let stdout = "";
 		let stderr = "";
-		child.stdout.on("data", (d) => (stdout += d));
-		child.stderr.on("data", (d) => (stderr += d));
+		// Decode as UTF-8 so a character split across two chunks stays whole
+		child.stdout.setEncoding("utf8").on("data", (d: string) => (stdout += d));
+		child.stderr.setEncoding("utf8").on("data", (d: string) => (stderr += d));
 		child.on("error", fail);
-		child.on("close", (code) => done({ code, stdout, stderr }));
+		// The timeout kills it with SIGTERM; an abort from Esc comes back through "error" instead
+		child.on("close", (code, killedBy) => done({ code, timedOut: killedBy === "SIGTERM" && !signal?.aborted, stdout, stderr }));
 	});
 }
 
-/** The PNG files codex saved for one thread, oldest first */
+/**
+ * The PNG files codex saved for one thread, oldest first. codex's --json events do not name the file,
+ * so this follows where codex keeps them (checked with codex-cli 0.166)
+ */
 async function savedImages(threadId: string): Promise<string[]> {
 	const dir = join(process.env.CODEX_HOME ?? join(homedir(), ".codex"), "generated_images", threadId);
 	const names = await readdir(dir).catch(() => [] as string[]);
-	const files = names.filter((n) => n.endsWith(".png")).map((n) => join(dir, n));
-	const times = await Promise.all(files.map(async (f) => (await stat(f)).mtimeMs));
-	return files.map((f, i) => ({ f, t: times[i] })).sort((a, b) => a.t - b.t).map(({ f }) => f);
+	const found = await Promise.all(
+		names.filter((n) => n.endsWith(".png")).map(async (n) => ({ file: join(dir, n), time: await stat(join(dir, n)).then((s) => s.mtimeMs, () => -1) })),
+	);
+	return found.filter(({ time }) => time >= 0).sort((a, b) => a.time - b.time).map(({ file }) => file);
+}
+
+/** Why a reference cannot be passed to codex, or undefined. codex skips a missing file without a word */
+async function badReference(path: string): Promise<string | undefined> {
+	if (path.includes(",")) return `${path}: codex may split image paths at commas; copy it to a name without one`;
+	return access(path).then(
+		() => undefined,
+		() => `${path}: not found`,
+	);
 }
 
 export default function (pi: ExtensionAPI) {
@@ -58,9 +75,11 @@ export default function (pi: ExtensionAPI) {
 		async execute(_id, params, signal, onUpdate, ctx) {
 			const fail = (text: string) => ({ content: [{ type: "text" as const, text }], details: { files: [] as string[] } });
 			const references = (params.references ?? []).map((p) => (isAbsolute(p) ? p : resolve(ctx.cwd, p)));
+			const bad = (await Promise.all(references.map(badReference))).filter(Boolean);
+			if (bad.length > 0) return fail(`Reference images not usable: ${bad.join("; ")}`);
 			onUpdate?.({ content: [{ type: "text", text: "Generating an image with codex…" }], details: { files: [] } });
 
-			let run: Awaited<ReturnType<typeof runCodex>>;
+			let run: Run;
 			try {
 				run = await runCodex(codexArgs(params.prompt, references), ctx.cwd, signal);
 			} catch (error) {
@@ -70,7 +89,9 @@ export default function (pi: ExtensionAPI) {
 			const events = readEvents(run.stdout);
 			const files = events.threadId ? await savedImages(events.threadId) : [];
 			if (files.length === 0) {
-				const why = events.error ?? events.message ?? (run.stderr.trim().split("\n").at(-1) || `codex exited with ${run.code}`);
+				const why = run.timedOut
+					? `codex did not finish within ${TIMEOUT_MS / 60_000} minutes`
+					: events.failure || events.message || events.notice || run.stderr.trim().split("\n").at(-1) || `codex exited with ${run.code}`;
 				return fail(`No image was generated: ${why}`);
 			}
 
@@ -78,9 +99,12 @@ export default function (pi: ExtensionAPI) {
 				{ type: "text", text: `Saved: ${files.join(", ")}${events.message ? `\n${events.message}` : ""}` },
 			];
 			for (const file of files) {
-				const bytes = await readFile(file);
-				const shown = await resizeImage(bytes, "image/png", SHOWN).catch(() => null);
-				content.push(shown ? { type: "image", data: shown.data, mimeType: shown.mimeType } : { type: "image", data: bytes.toString("base64"), mimeType: "image/png" });
+				// Only a resized copy is sent: null means pi could not bring it under its size limit, and the full file may be megabytes
+				const shown = await readFile(file)
+					.then((bytes) => resizeImage(bytes, "image/png", SHOWN))
+					.catch(() => null);
+				if (shown) content.push({ type: "image", data: shown.data, mimeType: shown.mimeType });
+				else content.push({ type: "text", text: `${file} could not be shown here; open the file to see it.` });
 			}
 			return { content, details: { files } };
 		},

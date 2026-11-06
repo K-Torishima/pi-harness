@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { test } from "node:test";
+import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { loadExtension } from "../../test/load-extension.ts";
 import { codexArgs, instruction, readEvents } from "./codex.ts";
@@ -27,15 +27,26 @@ test("readEvents finds the thread, the last message, and errors", () => {
 		'{"type":"item.completed","item":{"type":"agent_message","text":"A fox. "}}',
 	];
 	assert.deepEqual(readEvents(lines.join("\n")), { threadId: "t-1", message: "A fox." });
-	assert.equal(readEvents('{"type":"turn.failed","error":{"message":"quota"}}').error, "quota");
+	assert.equal(readEvents('{"type":"turn.failed","error":{"message":"quota"}}').failure, "quota");
+	assert.deepEqual(readEvents('{"type":"error","message":"Reconnecting... 1/5"}'), { notice: "Reconnecting... 1/5" }, "a retry notice is not the failure");
 });
 
 // A 1x1 PNG
 const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 
+const saved = { PATH: process.env.PATH, CODEX_HOME: process.env.CODEX_HOME };
+const roots: string[] = [];
+after(() => {
+	process.env.PATH = saved.PATH;
+	if (saved.CODEX_HOME === undefined) delete process.env.CODEX_HOME;
+	else process.env.CODEX_HOME = saved.CODEX_HOME;
+	for (const root of roots) rmSync(root, { recursive: true, force: true });
+});
+
 /** Put a fake codex on PATH that saves one PNG under CODEX_HOME, as the real one does */
 function fakeCodex(saves: boolean) {
 	const root = mkdtempSync(join(tmpdir(), "pi-image-"));
+	roots.push(root);
 	const bin = join(root, "codex");
 	writeFileSync(
 		bin,
@@ -48,7 +59,7 @@ console.log(JSON.stringify({ type: "item.completed", item: { type: "agent_messag
 `,
 	);
 	chmodSync(bin, 0o755);
-	process.env.PATH = `${root}:${process.env.PATH}`;
+	process.env.PATH = `${root}:${saved.PATH}`;
 	process.env.CODEX_HOME = root;
 	return root;
 }
@@ -70,4 +81,12 @@ test("when codex saves nothing, the tool says why", async () => {
 	const r = await m.ext.tools.get("image").definition.execute("id", { prompt: "a fox" }, undefined, undefined, m.ctx);
 	assert.equal(r.content.length, 1);
 	assert.match(r.content[0].text, /No image was generated: I cannot draw that\./);
+});
+
+test("missing references and paths with commas are refused before codex runs", async () => {
+	const root = fakeCodex(true);
+	const m = await loadExtension(join(HERE, "index.ts"), root);
+	const run = (references: string[]) => m.ext.tools.get("image").definition.execute("id", { prompt: "x", references }, undefined, undefined, m.ctx);
+	assert.match((await run(["nope.png"])).content[0].text, /nope\.png: not found/);
+	assert.match((await run(["/a,b.png"])).content[0].text, /commas/);
 });
